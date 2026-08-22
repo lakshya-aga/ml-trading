@@ -63,9 +63,9 @@ def test_bars_join_cleanly_against_the_source_ticks(tick_frame):
     from afml_india.bars.finkit_bars import build_bars
 
     bars = build_bars(tick_frame, kind="dollar", bars_per_day=20)
-    turnover = (tick_frame["price"] * tick_frame["volume"]).groupby(
-        tick_frame.index.normalize()
-    ).sum()
+    turnover = (
+        (tick_frame["price"] * tick_frame["volume"]).groupby(tick_frame.index.normalize()).sum()
+    )
     counts = bars.index.normalize().value_counts().sort_index()
     joined = counts.to_frame("bars").join(turnover.rename("turnover"), how="inner")
     assert len(joined) > 0

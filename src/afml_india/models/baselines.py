@@ -99,9 +99,13 @@ def logistic(seed: int = 0, last_only: bool = True, C: float = 0.1) -> FlattenAd
         _PipelineWithWeights(
             [
                 ("scale", StandardScaler()),
-                ("clf", LogisticRegression(C=C, max_iter=2000, class_weight="balanced", random_state=seed)),
+                (
+                    "clf",
+                    LogisticRegression(
+                        C=C, max_iter=2000, class_weight="balanced", random_state=seed
+                    ),
+                ),
             ]
         ),
         last_only=last_only,
     )
-

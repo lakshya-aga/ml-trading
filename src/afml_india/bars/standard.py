@@ -19,7 +19,14 @@ from afml_india.utils.validation import ensure_datetime_index, ensure_monotonic
 
 TICK_COLUMNS = ("price", "volume")
 BAR_COLUMNS = (
-    "open", "high", "low", "close", "volume", "value", "ticks", "vwap",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "value",
+    "ticks",
+    "vwap",
 )
 
 
@@ -192,7 +199,9 @@ def bars_from_ohlcv(
     synthetic = pd.DataFrame({"price": price, "volume": ohlcv["volume"]}, index=ohlcv.index)
 
     if threshold is None:
-        threshold = suggest_threshold(synthetic, kind=kind, target_bars_per_day=target_bars_per_day or 10)
+        threshold = suggest_threshold(
+            synthetic, kind=kind, target_bars_per_day=target_bars_per_day or 10
+        )
 
     builders: dict[str, Callable[[pd.DataFrame, float], pd.DataFrame]] = {
         "tick": lambda t, x: tick_bars(t, int(max(1, round(x)))),

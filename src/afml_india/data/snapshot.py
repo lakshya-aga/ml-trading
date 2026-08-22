@@ -92,11 +92,7 @@ class Snapshot:
         """Filesystem-safe ticker stems present in the snapshot (``RIL_IN``)."""
         stems = {Path(n).stem for n in self._names if n.startswith("daily/")}
         if not stems:
-            stems = {
-                Path(n).stem.rsplit("_", 1)[0]
-                for n in self._names
-                if n.startswith("ticks/")
-            }
+            stems = {Path(n).stem.rsplit("_", 1)[0] for n in self._names if n.startswith("ticks/")}
         return sorted(stems)
 
     @property
@@ -113,7 +109,9 @@ class Snapshot:
         frame["date"] = pd.to_datetime(frame["date"])
         return frame.set_index("date").sort_index()
 
-    def daily_panel(self, field: str = "px_last", tickers: Iterable[str] | None = None) -> pd.DataFrame:
+    def daily_panel(
+        self, field: str = "px_last", tickers: Iterable[str] | None = None
+    ) -> pd.DataFrame:
         """Wide panel of one daily field across tickers."""
         tickers = list(tickers) if tickers is not None else self.tickers
         series = {}

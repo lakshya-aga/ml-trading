@@ -87,29 +87,62 @@ get_ind_matrix = tz_safe(get_ind_matrix)
 
 __all__ = [
     # India layer
-    "NSE", "NSECalendar", "IST", "CostModel", "InstrumentSpec", "Segment",
-    "apply_costs", "Universe", "Snapshot", "find_snapshot",
+    "NSE",
+    "NSECalendar",
+    "IST",
+    "CostModel",
+    "InstrumentSpec",
+    "Segment",
+    "apply_costs",
+    "Universe",
+    "Snapshot",
+    "find_snapshot",
     # Bars
-    "build_bars", "build_all_bars", "prepare_tick_frame", "suggest_thresholds",
-    "bars_from_ohlcv", "time_bars",
-    "get_tick_bars", "get_volume_bars", "get_dollar_bars", "get_time_bars",
-    "get_ema_dollar_imbalance_bars", "get_ema_dollar_run_bars",
+    "build_bars",
+    "build_all_bars",
+    "prepare_tick_frame",
+    "suggest_thresholds",
+    "bars_from_ohlcv",
+    "time_bars",
+    "get_tick_bars",
+    "get_volume_bars",
+    "get_dollar_bars",
+    "get_time_bars",
+    "get_ema_dollar_imbalance_bars",
+    "get_ema_dollar_run_bars",
     # Filters / event sampling
-    "cusum_filter", "z_score_filter", "sample_events",
-    "get_chu_stinchcombe_white_statistics", "get_sadf",
+    "cusum_filter",
+    "z_score_filter",
+    "sample_events",
+    "get_chu_stinchcombe_white_statistics",
+    "get_sadf",
     # Stationarity
-    "frac_diff", "frac_diff_ffd", "get_weights", "get_weights_ffd",
-    "min_ffd_order", "fracdiff_scan",
+    "frac_diff",
+    "frac_diff_ffd",
+    "get_weights",
+    "get_weights_ffd",
+    "min_ffd_order",
+    "fracdiff_scan",
     # Labelling
-    "get_events", "get_bins", "add_vertical_barrier", "drop_labels",
-    "trend_scanning_labels", "get_daily_vol", "triple_barrier_labels",
+    "get_events",
+    "get_bins",
+    "add_vertical_barrier",
+    "drop_labels",
+    "trend_scanning_labels",
+    "get_daily_vol",
+    "triple_barrier_labels",
     # Sample weights
-    "get_av_uniqueness_from_triple_barrier", "get_weights_by_return",
-    "get_weights_by_time_decay", "get_ind_matrix", "seq_bootstrap",
+    "get_av_uniqueness_from_triple_barrier",
+    "get_weights_by_return",
+    "get_weights_by_time_decay",
+    "get_ind_matrix",
+    "seq_bootstrap",
     # Cross-validation
-    "PurgedKFold", "ml_cross_val_score",
+    "PurgedKFold",
+    "ml_cross_val_score",
     # Diagnostics
-    "bar_statistics", "compare_bar_types",
+    "bar_statistics",
+    "compare_bar_types",
 ]
 
 
@@ -186,8 +219,7 @@ def sample_events(
     logger.info("Sampled %d events from %d bars (%.1f%%)", len(events), len(close), rate)
     if rate > 50:
         logger.warning(
-            "Over half the bars became events; the threshold is likely too low. "
-            "Raise vol_multiple."
+            "Over half the bars became events; the threshold is likely too low. Raise vol_multiple."
         )
     return events
 
@@ -315,9 +347,7 @@ def triple_barrier_labels(
     if len(events) == 0:
         raise ValueError("no events survive the volatility warm-up; supply more bars")
 
-    vertical = pd.Series(
-        calendar.add_sessions(events, num_days), index=events, name="t1"
-    )
+    vertical = pd.Series(calendar.add_sessions(events, num_days), index=events, name="t1")
     # Barriers past the end of the sample cannot resolve; NaT tells get_events
     # to leave them open rather than mislabel them.
     vertical[vertical > close.index[-1]] = pd.NaT
@@ -369,4 +399,6 @@ def bar_statistics(bars: pd.DataFrame, price_col: str = "close") -> pd.Series:
 
 def compare_bar_types(bar_dict: dict[str, pd.DataFrame], price_col: str = "close") -> pd.DataFrame:
     """Side-by-side :func:`bar_statistics` for several bar types."""
-    return pd.DataFrame({name: bar_statistics(bars, price_col) for name, bars in bar_dict.items()}).T
+    return pd.DataFrame(
+        {name: bar_statistics(bars, price_col) for name, bars in bar_dict.items()}
+    ).T

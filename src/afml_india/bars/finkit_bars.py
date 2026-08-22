@@ -175,9 +175,7 @@ def build_bars(
         raise ValueError("no usable ticks after cleaning")
 
     if threshold is None:
-        threshold = suggest_thresholds(frame, bars_per_day)[
-            "dollar" if kind == "rupee" else kind
-        ]
+        threshold = suggest_thresholds(frame, bars_per_day)["dollar" if kind == "rupee" else kind]
     if kind == "tick":
         threshold = int(max(1, round(threshold)))
 

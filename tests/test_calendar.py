@@ -11,7 +11,7 @@ from afml_india.data.calendar import NSE, NSECalendar
 def test_weekends_are_not_trading_days():
     assert not NSE.is_trading_day("2024-01-06")  # Saturday
     assert not NSE.is_trading_day("2024-01-07")  # Sunday
-    assert NSE.is_trading_day("2024-01-05")      # Friday
+    assert NSE.is_trading_day("2024-01-05")  # Friday
 
 
 def test_republic_day_is_a_holiday():

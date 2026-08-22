@@ -71,9 +71,7 @@ class CostModel:
 
     def _exchange_txn(self) -> float:
         return (
-            self.exchange_txn_futures
-            if self.segment is Segment.FUTURES
-            else self.exchange_txn_cash
+            self.exchange_txn_futures if self.segment is Segment.FUTURES else self.exchange_txn_cash
         )
 
     def _stamp(self) -> float:
@@ -89,15 +87,13 @@ class CostModel:
             return self.stt_delivery
         if side > 0:
             return 0.0
-        return (
-            self.stt_futures_sell
-            if self.segment is Segment.FUTURES
-            else self.stt_intraday_sell
-        )
+        return self.stt_futures_sell if self.segment is Segment.FUTURES else self.stt_intraday_sell
 
     def brokerage(self, turnover: float | np.ndarray) -> float | np.ndarray:
         """Brokerage on ``turnover``, applying the per-order rupee cap."""
-        return np.minimum(np.asarray(turnover, dtype=float) * self.brokerage_rate, self.brokerage_cap)
+        return np.minimum(
+            np.asarray(turnover, dtype=float) * self.brokerage_rate, self.brokerage_cap
+        )
 
     def leg_cost(
         self,

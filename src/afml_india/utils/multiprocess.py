@@ -73,11 +73,7 @@ def mp_pandas_obj(
         return pd.Series(dtype=float)
 
     n_chunks = max(1, num_threads * mp_batches)
-    parts = (
-        _linear_parts(len(atoms), n_chunks)
-        if lin_mols
-        else _nested_parts(len(atoms), n_chunks)
-    )
+    parts = _linear_parts(len(atoms), n_chunks) if lin_mols else _nested_parts(len(atoms), n_chunks)
 
     jobs: list[dict[str, Any]] = []
     for i in range(1, len(parts)):

@@ -99,7 +99,9 @@ def sequence_span(
     if label_end is not None:
         aligned = label_end.reindex(index)
         ends = ends.where(aligned.isna(), aligned)
-    return pd.DataFrame({"start": pd.DatetimeIndex(starts), "end": pd.DatetimeIndex(ends)}, index=index)
+    return pd.DataFrame(
+        {"start": pd.DatetimeIndex(starts), "end": pd.DatetimeIndex(ends)}, index=index
+    )
 
 
 class SequenceScaler:

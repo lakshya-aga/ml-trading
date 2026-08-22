@@ -44,12 +44,22 @@ class WalkForwardSplit:
     expanding:
         ``True`` grows the training window from the start of the sample;
         ``False`` keeps it a fixed length ending at the purge boundary.
+    min_train:
+        Minimum training samples a fold must retain *after* purging to be
+        scored. Folds below it are skipped with a warning rather than silently
+        producing a score fitted on almost nothing.
+    train_window:
+        Length of the rolling training window when ``expanding`` is ``False``.
+        Defaults to ``4 * min_train``, because the window length and the
+        acceptance threshold are different decisions: purging eats into the
+        window, so a rolling window equal to ``min_train`` can never clear it.
     """
 
     n_splits: int = 5
     embargo: float = 0.01
     expanding: bool = True
     min_train: int = 100
+    train_window: int | None = None
 
     def split(self, spans: pd.DataFrame) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Yield ``(train_idx, test_idx)`` positional arrays.
@@ -82,8 +92,8 @@ class WalkForwardSplit:
 
             candidates = np.arange(0, test_start)
             if not self.expanding:
-                window = test_start - self.min_train
-                candidates = candidates[candidates >= max(0, window)]
+                window = self.train_window or (4 * self.min_train)
+                candidates = candidates[candidates >= max(0, test_start - window)]
 
             # Purge: drop any training sample whose span overlaps the test span
             # in either direction. A sample whose label resolves inside the test
@@ -101,7 +111,9 @@ class WalkForwardSplit:
                 logger.warning(
                     "Split %d of %d has only %d training samples after purge; skipping "
                     "(it will not appear in the fold results)",
-                    i, self.n_splits, len(train_idx),
+                    i,
+                    self.n_splits,
+                    len(train_idx),
                 )
                 continue
             yield train_idx, test_idx
@@ -185,8 +197,13 @@ def walk_forward_evaluate(
         test_weights = None if sample_weight is None else sample_weight[test_idx]
         metrics = classification_metrics(y[test_idx], proba, test_weights)
         metrics.update(
-            {"fold": fold, "n_train": len(train_idx), "n_test": len(test_idx),
-             "test_start": spans.index[test_idx[0]], "test_end": spans.index[test_idx[-1]]}
+            {
+                "fold": fold,
+                "n_train": len(train_idx),
+                "n_test": len(test_idx),
+                "test_start": spans.index[test_idx[0]],
+                "test_end": spans.index[test_idx[-1]],
+            }
         )
         rows.append(metrics)
         prediction_frames.append(
@@ -197,7 +214,11 @@ def walk_forward_evaluate(
         )
         logger.info(
             "Fold %d: train=%d test=%d  acc=%.3f  auc=%.3f",
-            fold, len(train_idx), len(test_idx), metrics["accuracy"], metrics["roc_auc"],
+            fold,
+            len(train_idx),
+            len(test_idx),
+            metrics["accuracy"],
+            metrics["roc_auc"],
         )
 
     if not rows:

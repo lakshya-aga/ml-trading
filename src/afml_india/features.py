@@ -92,9 +92,9 @@ def volatility_features(
     if missing:
         raise KeyError(f"volatility features need columns {sorted(missing)}")
 
-    o, h, l, c = (bars[x].astype(float) for x in ("open", "high", "low", "close"))
-    hl = np.log(h / l)
-    co = np.log(c / o)
+    open_, high, low, close = (bars[x].astype(float) for x in ("open", "high", "low", "close"))
+    hl = np.log(high / low)
+    co = np.log(close / open_)
 
     out = {}
     for w in windows:
@@ -103,7 +103,7 @@ def volatility_features(
             (0.5 * hl**2 - (2 * np.log(2) - 1) * co**2).rolling(w).mean().clip(lower=0)
         )
         # Ratio of range vol to close-to-close vol: a crude gap/jump detector.
-        cc = np.log(c).diff().rolling(w).std()
+        cc = np.log(close).diff().rolling(w).std()
         out[f"vol_ratio_{w}"] = out[f"parkinson_{w}"] / cc.replace(0, np.nan)
     return pd.DataFrame(out, index=bars.index)
 
@@ -229,7 +229,9 @@ class FeatureConfig:
             features = features.dropna()
             logger.info(
                 "Feature matrix: %d rows x %d features (dropped %d warm-up rows)",
-                len(features), features.shape[1], before - len(features),
+                len(features),
+                features.shape[1],
+                before - len(features),
             )
         return features
 

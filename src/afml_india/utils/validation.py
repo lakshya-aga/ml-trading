@@ -13,7 +13,9 @@ import pandas as pd
 def ensure_datetime_index(obj: pd.Series | pd.DataFrame, name: str = "input") -> None:
     """Raise if ``obj`` is not indexed by a :class:`~pandas.DatetimeIndex`."""
     if not isinstance(obj.index, pd.DatetimeIndex):
-        raise TypeError(f"{name} must be indexed by a DatetimeIndex, got {type(obj.index).__name__}")
+        raise TypeError(
+            f"{name} must be indexed by a DatetimeIndex, got {type(obj.index).__name__}"
+        )
 
 
 def ensure_monotonic(obj: pd.Series | pd.DataFrame, name: str = "input") -> None:

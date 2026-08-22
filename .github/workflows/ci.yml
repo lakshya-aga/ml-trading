@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # fin-kit supplies the AFML algorithms
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests scripts
+
+      - name: Format check
+        run: ruff format --check src tests scripts
+
+      - name: Fast tests
+        run: pytest -m "not slow" -q --durations=10
+
+      # The slow tests fit models and generate a snapshot; run them once rather
+      # than on every interpreter in the matrix.
+      - name: Full suite
+        if: matrix.python-version == '3.11'
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu || pip install torch
+          pytest -q --durations=10
+
+  script-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # The Bloomberg path cannot run in CI, but the offline demo exercises the
+      # same code down to the zip layout.
+      - name: Generate a synthetic snapshot
+        run: python scripts/fetch_bloomberg_snapshot.py --offline-demo --members 2 --tick-days 5
+
+      - name: Read it back
+        run: |
+          python - <<'PY'
+          from afml_india.research import Snapshot, find_snapshot, build_all_bars
+          snap = Snapshot(find_snapshot())
+          print(snap)
+          assert snap.is_synthetic
+          ticker = snap.tickers[0]
+          bars = build_all_bars(snap.ticks(ticker, "trades"), bars_per_day=20)
+          for kind, frame in bars.items():
+              print(kind, frame.shape)
+              assert len(frame) > 0
+              assert str(frame.index.tz) == "Asia/Kolkata"
+          PY

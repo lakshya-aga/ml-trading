@@ -75,9 +75,7 @@ class NSECalendar:
             return False
         return stamp not in self._holiday_set
 
-    def sessions(
-        self, start: pd.Timestamp | str, end: pd.Timestamp | str
-    ) -> pd.DatetimeIndex:
+    def sessions(self, start: pd.Timestamp | str, end: pd.Timestamp | str) -> pd.DatetimeIndex:
         """Trading days in ``[start, end]`` as midnight-normalised timestamps."""
         days = pd.bdate_range(pd.Timestamp(start).normalize(), pd.Timestamp(end).normalize())
         mask = ~days.isin(self.holidays)

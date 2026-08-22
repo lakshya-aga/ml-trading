@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -34,7 +33,7 @@ def test_stamp_duty_is_buy_side_only():
 
 def test_brokerage_cap_binds_on_large_orders():
     model = CostModel(brokerage_rate=0.0003, brokerage_cap=20.0)
-    assert model.brokerage(10_000) == pytest.approx(3.0)      # under the cap
+    assert model.brokerage(10_000) == pytest.approx(3.0)  # under the cap
     assert model.brokerage(10_000_000) == pytest.approx(20.0)  # capped
 
 
@@ -71,9 +70,7 @@ def test_circuit_band():
 
 
 def test_apply_costs_prices_both_sides():
-    trades = pd.DataFrame(
-        {"price": [1000.0, 1000.0], "quantity": [100, 100], "side": [1, -1]}
-    )
+    trades = pd.DataFrame({"price": [1000.0, 1000.0], "quantity": [100, 100], "side": [1, -1]})
     costs = apply_costs(trades, CostModel(segment=Segment.DELIVERY))
     assert len(costs) == 2
     assert (costs > 0).all()

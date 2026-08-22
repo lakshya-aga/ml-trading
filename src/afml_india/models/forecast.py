@@ -162,7 +162,10 @@ class RecursiveLSTMForecaster:
             def __init__(self) -> None:
                 super().__init__()
                 self.lstm = nn.LSTM(
-                    1, cfg.hidden_size, cfg.num_layers, batch_first=True,
+                    1,
+                    cfg.hidden_size,
+                    cfg.num_layers,
+                    batch_first=True,
                     dropout=cfg.dropout if cfg.num_layers > 1 else 0.0,
                 )
                 self.head = nn.Linear(cfg.hidden_size, 1)

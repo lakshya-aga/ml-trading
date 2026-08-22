@@ -79,9 +79,7 @@ def test_missing_columns_are_rejected(tick_frame):
 
 
 def test_empty_input_returns_an_empty_frame():
-    empty = pd.DataFrame(
-        {"price": [], "volume": []}, index=pd.DatetimeIndex([], name="timestamp")
-    )
+    empty = pd.DataFrame({"price": [], "volume": []}, index=pd.DatetimeIndex([], name="timestamp"))
     assert tick_bars(empty, 10).empty
 
 
@@ -104,13 +102,15 @@ def test_activity_bars_track_turnover_and_time_bars_do_not(tick_frame):
     correlation on both sides — a time-bar count is constant across sessions by
     construction, so its correlation with turnover is undefined rather than low.
     """
-    turnover = (tick_frame["price"] * tick_frame["volume"]).groupby(
-        tick_frame.index.normalize()
-    ).sum()
+    turnover = (
+        (tick_frame["price"] * tick_frame["volume"]).groupby(tick_frame.index.normalize()).sum()
+    )
 
     value_counts = (
         value_bars(tick_frame, suggest_threshold(tick_frame, "value", 20))
-        .index.normalize().value_counts().sort_index()
+        .index.normalize()
+        .value_counts()
+        .sort_index()
     )
     clock_counts = time_bars(tick_frame, "20min").index.normalize().value_counts().sort_index()
 

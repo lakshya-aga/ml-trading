@@ -351,9 +351,7 @@ class BacktestResult:
         equity = self.equity
         gross = performance_summary(equity["gross"], periods_per_year, risk_free_rate)
         net = performance_summary(equity["net"], periods_per_year, risk_free_rate)
-        out = pd.concat(
-            [gross.add_prefix("gross_"), net.add_prefix("net_")]
-        )
+        out = pd.concat([gross.add_prefix("gross_"), net.add_prefix("net_")])
         out["total_costs"] = float(self.costs.sum())
         out["mean_turnover"] = float(self.turnover.mean())
         out["cost_drag"] = float(gross["total_return"] - net["total_return"])
@@ -526,10 +524,9 @@ def attribution(result: BacktestResult) -> pd.DataFrame:
             "mean_weight": weights.mean(),
             "max_weight": weights.abs().max(),
             "periods_held": (weights.abs() > 1e-12).sum(),
-            "hit_rate": (contributions > 0).sum() / (weights.abs() > 1e-12).sum().replace(0, np.nan),
-            "mean_return_when_held": (
-                result.realised_returns.where(weights.abs() > 1e-12).mean()
-            ),
+            "hit_rate": (contributions > 0).sum()
+            / (weights.abs() > 1e-12).sum().replace(0, np.nan),
+            "mean_return_when_held": (result.realised_returns.where(weights.abs() > 1e-12).mean()),
         }
     )
     total = frame["contribution"].sum()

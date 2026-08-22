@@ -140,7 +140,11 @@ class TickerPipeline:
         several models against it without recomputing bars and labels.
         """
         from afml_india.bars.finkit_bars import build_bars  # noqa: PLC0415
-        from afml_india.research import min_ffd_order, sample_events, triple_barrier_labels  # noqa: PLC0415
+        from afml_india.research import (  # noqa: PLC0415
+            min_ffd_order,
+            sample_events,
+            triple_barrier_labels,
+        )
 
         cfg = self.config
         diagnostics: dict[str, Any] = {}
@@ -179,13 +183,14 @@ class TickerPipeline:
                 min_obs=cfg.fracdiff_min_obs,
             )
             d = selection["d"]
-            diagnostics["fracdiff"] = {
-                k: v for k, v in selection.items() if k != "scan"
-            }
+            diagnostics["fracdiff"] = {k: v for k, v in selection.items() if k != "scan"}
             diagnostics["fracdiff_scan"] = selection["scan"]
             logger.info(
                 "%s: d=%.2f (ADF p=%.4f, memory retained %.1f%%)",
-                ticker, d, selection["adf_pvalue"], 100 * selection["corr"],
+                ticker,
+                d,
+                selection["adf_pvalue"],
+                100 * selection["corr"],
             )
         else:
             d = float(cfg.fracdiff_d)
@@ -281,7 +286,9 @@ class TickerPipeline:
 
         events = labels[["t1"]].dropna()
         if events.empty:
-            logger.warning("%s: every label has an open barrier; skipping uniqueness weights", ticker)
+            logger.warning(
+                "%s: every label has an open barrier; skipping uniqueness weights", ticker
+            )
             return None
         try:
             uniqueness = get_av_uniqueness_from_triple_barrier(
@@ -297,7 +304,8 @@ class TickerPipeline:
         weights = uniqueness.reindex(labels.index)
         logger.info(
             "%s: mean average-uniqueness %.3f (1.0 would mean no overlap)",
-            ticker, float(weights.mean()),
+            ticker,
+            float(weights.mean()),
         )
         return weights
 

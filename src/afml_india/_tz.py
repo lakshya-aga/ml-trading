@@ -69,7 +69,10 @@ def restore_tz(obj: Any, tz: Any) -> Any:
         elif isinstance(out, pd.DataFrame):
             for col in out.columns:
                 dtype = out[col].dtype
-                if pd.api.types.is_datetime64_any_dtype(dtype) and getattr(dtype, "tz", None) is None:
+                if (
+                    pd.api.types.is_datetime64_any_dtype(dtype)
+                    and getattr(dtype, "tz", None) is None
+                ):
                     out[col] = out[col].dt.tz_localize(tz)
         return out
     return obj
@@ -104,7 +107,6 @@ def tz_safe(func: Callable) -> Callable:
         return restore_tz(result, tz)
 
     wrapper.__doc__ = (
-        (func.__doc__ or "")
-        + "\n\nWrapped by afml_india so tz-aware input is handled; see afml_india._tz."
-    )
+        func.__doc__ or ""
+    ) + "\n\nWrapped by afml_india so tz-aware input is handled; see afml_india._tz."
     return wrapper

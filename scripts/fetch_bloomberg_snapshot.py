@@ -374,7 +374,11 @@ def fetch_daily_history(
         chunk = tickers[i : i + chunk_size]
         LOG.info(
             "Daily history %d-%d of %d (%s to %s)",
-            i + 1, min(i + chunk_size, len(tickers)), len(tickers), start, end,
+            i + 1,
+            min(i + chunk_size, len(tickers)),
+            len(tickers),
+            start,
+            end,
         )
         request = session.create_request("HistoricalDataRequest")
         for ticker in chunk:
@@ -540,7 +544,8 @@ def resolve_tick_window(config: SnapshotConfig) -> tuple[dt.date, dt.date]:
             "Tick window starts %d days back, beyond Bloomberg's ~%d-day tick "
             "retention. Expect empty responses. Ticks will still be requested "
             "so the failure is visible rather than assumed.",
-            age, MAX_TICK_LOOKBACK_DAYS,
+            age,
+            MAX_TICK_LOOKBACK_DAYS,
         )
     return start, end
 
@@ -601,15 +606,17 @@ def probe_tick_availability(
                 break
 
         if recent is None:
-            rows.append({
-                "ticker": ticker,
-                "has_trade_tape": False,
-                "most_recent": None,
-                "oldest": None,
-                "retention_days": 0,
-                "note": "no ticks in the last 14 days — an index, an unlisted "
-                        "security, or no tick entitlement",
-            })
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "has_trade_tape": False,
+                    "most_recent": None,
+                    "oldest": None,
+                    "retention_days": 0,
+                    "note": "no ticks in the last 14 days — an index, an unlisted "
+                    "security, or no tick entitlement",
+                }
+            )
             continue
 
         # Bisect for the oldest session that still returns ticks.
@@ -625,14 +632,16 @@ def probe_tick_availability(
                 lo = mid
 
         oldest = today - dt.timedelta(days=hi)
-        rows.append({
-            "ticker": ticker,
-            "has_trade_tape": True,
-            "most_recent": recent,
-            "oldest": oldest,
-            "retention_days": (today - oldest).days,
-            "note": "",
-        })
+        rows.append(
+            {
+                "ticker": ticker,
+                "has_trade_tape": True,
+                "most_recent": recent,
+                "oldest": oldest,
+                "retention_days": (today - oldest).days,
+                "note": "",
+            }
+        )
         LOG.info("  %s: ticks back to %s (%d days)", ticker, oldest, (today - oldest).days)
 
     return pd.DataFrame(rows)
@@ -701,11 +710,16 @@ def build_offline_demo(config: SnapshotConfig, root: Path) -> dict:
     rng = np.random.default_rng(config.seed)
 
     demo_names = [
-        ("RIL IN Equity", 9.8, 980.0), ("HDFCB IN Equity", 8.1, 1120.0),
-        ("INFO IN Equity", 6.4, 1015.0), ("ICICIBC IN Equity", 5.2, 245.0),
-        ("TCS IN Equity", 4.9, 2450.0), ("ITC IN Equity", 4.1, 245.0),
-        ("LT IN Equity", 3.6, 1480.0), ("SBIN IN Equity", 3.0, 220.0),
-        ("HUVR IN Equity", 2.8, 860.0), ("BHARTI IN Equity", 2.4, 340.0),
+        ("RIL IN Equity", 9.8, 980.0),
+        ("HDFCB IN Equity", 8.1, 1120.0),
+        ("INFO IN Equity", 6.4, 1015.0),
+        ("ICICIBC IN Equity", 5.2, 245.0),
+        ("TCS IN Equity", 4.9, 2450.0),
+        ("ITC IN Equity", 4.1, 245.0),
+        ("LT IN Equity", 3.6, 1480.0),
+        ("SBIN IN Equity", 3.0, 220.0),
+        ("HUVR IN Equity", 2.8, 860.0),
+        ("BHARTI IN Equity", 2.4, 340.0),
     ]
     demo_names = demo_names[: max(1, min(config.demo_members, len(demo_names)))]
 
@@ -843,7 +857,13 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
             for ticker, frame in daily.items():
                 frame.to_csv(daily_dir / f"{_safe_name(ticker)}.csv")
                 report_rows.append(
-                    {"ticker": ticker, "kind": "daily", "day": "", "rows": len(frame), "status": "ok"}
+                    {
+                        "ticker": ticker,
+                        "kind": "daily",
+                        "day": "",
+                        "rows": len(frame),
+                        "status": "ok",
+                    }
                 )
             manifest["daily_tickers"] = len(daily)
 
@@ -852,7 +872,9 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
             start, end = resolve_tick_window(config)
             days = business_days(start, end)
             manifest["tick_window"] = {
-                "start": str(start), "end": str(end), "sessions": len(days),
+                "start": str(start),
+                "end": str(end),
+                "sessions": len(days),
                 "note": (
                     "Bloomberg retains roughly 140 days of intraday tick history, "
                     "so this window is recent even though the member list is not."
@@ -864,22 +886,41 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
                 bar_dir.mkdir(parents=True, exist_ok=True)
                 manifest["intraday_bar_minutes"] = config.tick_interval_minutes
                 for n, ticker in enumerate(tickers, 1):
-                    LOG.info("[%d/%d] %d-min bars for %s",
-                             n, len(tickers), config.tick_interval_minutes, ticker)
+                    LOG.info(
+                        "[%d/%d] %d-min bars for %s",
+                        n,
+                        len(tickers),
+                        config.tick_interval_minutes,
+                        ticker,
+                    )
                     try:
                         frame = fetch_intraday_bars(
                             session, ticker, start, end, config.tick_interval_minutes
                         )
                     except Exception as exc:  # noqa: BLE001
                         LOG.warning("%s intraday bars failed: %s", ticker, exc)
-                        report_rows.append({"ticker": ticker, "kind": "intraday_bar",
-                                            "day": "", "rows": 0, "status": f"error: {exc}"})
+                        report_rows.append(
+                            {
+                                "ticker": ticker,
+                                "kind": "intraday_bar",
+                                "day": "",
+                                "rows": 0,
+                                "status": f"error: {exc}",
+                            }
+                        )
                         continue
                     status = "ok" if len(frame) else "empty"
                     if len(frame):
                         frame.to_csv(bar_dir / f"{_safe_name(ticker)}.csv", index=False)
-                    report_rows.append({"ticker": ticker, "kind": "intraday_bar",
-                                        "day": "", "rows": len(frame), "status": status})
+                    report_rows.append(
+                        {
+                            "ticker": ticker,
+                            "kind": "intraday_bar",
+                            "day": "",
+                            "rows": len(frame),
+                            "status": status,
+                        }
+                    )
 
             for kind, subdir, events in (
                 ("trade", "trades", TRADE_EVENTS),
@@ -895,21 +936,36 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
                         except Exception as exc:  # noqa: BLE001 - one bad day must not kill the pull
                             LOG.warning("%s %s %s failed: %s", ticker, kind, day, exc)
                             report_rows.append(
-                                {"ticker": ticker, "kind": kind, "day": day,
-                                 "rows": 0, "status": f"error: {exc}"}
+                                {
+                                    "ticker": ticker,
+                                    "kind": kind,
+                                    "day": day,
+                                    "rows": 0,
+                                    "status": f"error: {exc}",
+                                }
                             )
                             continue
                         if frame.empty:
                             report_rows.append(
-                                {"ticker": ticker, "kind": kind, "day": day,
-                                 "rows": 0, "status": "empty"}
+                                {
+                                    "ticker": ticker,
+                                    "kind": kind,
+                                    "day": day,
+                                    "rows": 0,
+                                    "status": "empty",
+                                }
                             )
                             continue
                         path = out_dir / f"{_safe_name(ticker)}_{day:%Y%m%d}.csv"
                         frame.to_csv(path, index=False)
                         report_rows.append(
-                            {"ticker": ticker, "kind": kind, "day": day,
-                             "rows": len(frame), "status": "ok"}
+                            {
+                                "ticker": ticker,
+                                "kind": kind,
+                                "day": day,
+                                "rows": len(frame),
+                                "status": "ok",
+                            }
                         )
 
         pd.DataFrame(report_rows).to_csv(root / "fetch_report.csv", index=False)
@@ -934,41 +990,91 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--index", default="NIFTY Index",
-                        help="Bloomberg index ticker (default: 'NIFTY Index')")
-    parser.add_argument("--asof", type=_parse_date, default=None,
-                        help="Point-in-time date for index composition (default: 10 years ago)")
-    parser.add_argument("--tick-days", type=int, default=20,
-                        help="Trading-day window of tick data to pull (default: 20)")
-    parser.add_argument("--tick-start", type=_parse_date, default=None,
-                        help="Explicit tick window start; overrides --tick-days")
-    parser.add_argument("--tick-end", type=_parse_date, default=None,
-                        help="Explicit tick window end (default: yesterday)")
-    parser.add_argument("--out", dest="out_dir", type=Path, default=Path("data/snapshots"),
-                        help="Output directory for the tree and the zip")
+    parser.add_argument(
+        "--index", default="NIFTY Index", help="Bloomberg index ticker (default: 'NIFTY Index')"
+    )
+    parser.add_argument(
+        "--asof",
+        type=_parse_date,
+        default=None,
+        help="Point-in-time date for index composition (default: 10 years ago)",
+    )
+    parser.add_argument(
+        "--tick-days",
+        type=int,
+        default=20,
+        help="Trading-day window of tick data to pull (default: 20)",
+    )
+    parser.add_argument(
+        "--tick-start",
+        type=_parse_date,
+        default=None,
+        help="Explicit tick window start; overrides --tick-days",
+    )
+    parser.add_argument(
+        "--tick-end",
+        type=_parse_date,
+        default=None,
+        help="Explicit tick window end (default: yesterday)",
+    )
+    parser.add_argument(
+        "--out",
+        dest="out_dir",
+        type=Path,
+        default=Path("data/snapshots"),
+        help="Output directory for the tree and the zip",
+    )
     parser.add_argument("--host", default="localhost", help="Bloomberg host")
     parser.add_argument("--port", type=int, default=8194, help="Bloomberg port")
-    parser.add_argument("--max-members", type=int, default=None,
-                        help="Cap the member list, useful for a quick trial run")
-    parser.add_argument("--tickers-file", type=Path, default=None,
-                        help="CSV with a 'bloomberg_ticker' or 'ticker' column, used "
-                             "instead of resolving point-in-time index membership")
-    parser.add_argument("--list-members", action="store_true",
-                        help="Resolve and print the universe, then stop (no data pulled)")
-    parser.add_argument("--probe", action="store_true",
-                        help="Report which securities have a trade tape and how far back "
-                             "tick history actually goes on this terminal, then stop")
-    parser.add_argument("--intraday-bars", type=int, default=None, metavar="MINUTES",
-                        help="Also pull N-minute intraday bars. Use when tick data is "
-                             "not entitled: same ~140-day retention, far wider access")
+    parser.add_argument(
+        "--max-members",
+        type=int,
+        default=None,
+        help="Cap the member list, useful for a quick trial run",
+    )
+    parser.add_argument(
+        "--tickers-file",
+        type=Path,
+        default=None,
+        help="CSV with a 'bloomberg_ticker' or 'ticker' column, used "
+        "instead of resolving point-in-time index membership",
+    )
+    parser.add_argument(
+        "--list-members",
+        action="store_true",
+        help="Resolve and print the universe, then stop (no data pulled)",
+    )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="Report which securities have a trade tape and how far back "
+        "tick history actually goes on this terminal, then stop",
+    )
+    parser.add_argument(
+        "--intraday-bars",
+        type=int,
+        default=None,
+        metavar="MINUTES",
+        help="Also pull N-minute intraday bars. Use when tick data is "
+        "not entitled: same ~140-day retention, far wider access",
+    )
     parser.add_argument("--skip-ticks", action="store_true", help="Daily history only")
     parser.add_argument("--skip-daily", action="store_true", help="Tick data only")
-    parser.add_argument("--keep-tree", action="store_true",
-                        help="Keep the uncompressed tree alongside the zip")
-    parser.add_argument("--offline-demo", action="store_true",
-                        help="Generate synthetic data instead of calling Bloomberg")
-    parser.add_argument("--members", dest="demo_members", type=int, default=5,
-                        help="Number of synthetic members in --offline-demo mode")
+    parser.add_argument(
+        "--keep-tree", action="store_true", help="Keep the uncompressed tree alongside the zip"
+    )
+    parser.add_argument(
+        "--offline-demo",
+        action="store_true",
+        help="Generate synthetic data instead of calling Bloomberg",
+    )
+    parser.add_argument(
+        "--members",
+        dest="demo_members",
+        type=int,
+        default=5,
+        help="Number of synthetic members in --offline-demo mode",
+    )
     parser.add_argument("--seed", type=int, default=7, help="Seed for --offline-demo")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args(argv)
@@ -1038,10 +1144,20 @@ def main(argv: list[str] | None = None) -> int:
         "index_members.csv": ["ticker", "weight", "as_of"],
         "daily/<TICKER>.csv": ["date", *[f.lower() for f in config.daily_fields]],
         "ticks/trades/<TICKER>_<YYYYMMDD>.csv": [
-            "date_time", "type", "price", "volume", "condition_codes", "exchange_code"
+            "date_time",
+            "type",
+            "price",
+            "volume",
+            "condition_codes",
+            "exchange_code",
         ],
         "ticks/quotes/<TICKER>_<YYYYMMDD>.csv": [
-            "date_time", "type", "price", "volume", "condition_codes", "exchange_code"
+            "date_time",
+            "type",
+            "price",
+            "volume",
+            "condition_codes",
+            "exchange_code",
         ],
         "fetch_report.csv": ["ticker", "kind", "day", "rows", "status"],
     }

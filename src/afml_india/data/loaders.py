@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from afml_india.data.calendar import IST
@@ -72,9 +71,7 @@ def _finalise(
     frame.index = pd.to_datetime(frame.index)
     if tz is not None:
         frame.index = (
-            frame.index.tz_localize(tz)
-            if frame.index.tz is None
-            else frame.index.tz_convert(tz)
+            frame.index.tz_localize(tz) if frame.index.tz is None else frame.index.tz_convert(tz)
         )
     frame = frame.sort_index()
     frame = frame[~frame.index.duplicated(keep="last")]
@@ -250,7 +247,9 @@ def clean_ohlcv(
         rets = out["close"].pct_change()
         bad = rets.abs() > max_return
         if bad.any():
-            logger.warning("Dropping %d bars with |return| > %.0f%%", int(bad.sum()), max_return * 100)
+            logger.warning(
+                "Dropping %d bars with |return| > %.0f%%", int(bad.sum()), max_return * 100
+            )
         out = out[~bad.fillna(False)]
     return out
 

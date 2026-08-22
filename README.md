@@ -95,6 +95,20 @@ Beyond that window the maximum resolution `blpapi` offers is **daily** —
 `IntradayBarRequest` hits the same cliff. [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)
 covers the limit per request type and where deep Indian tick history is actually sold.
 
+### No Bloomberg? Free intraday data works too
+
+```bash
+pip install yfinance
+python -m afml_india.data.free_sources --check RELIANCE      # what Yahoo serves
+python scripts/build_snapshot_from_bars.py --yahoo RELIANCE,INFY,TCS --interval 5m
+```
+
+`build_snapshot_from_bars.py` also ingests any folder of minute CSVs — a Kaggle
+dump, a broker export — into the same snapshot the notebooks read, auto-detecting
+the usual column spellings. See [docs/FREE_DATA.md](docs/FREE_DATA.md) for what each
+free source actually gives you, and for the honest limits of building bars from bars
+rather than from a tape.
+
 ---
 
 ## Using the library

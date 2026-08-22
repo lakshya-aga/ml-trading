@@ -84,6 +84,9 @@ mixes horizons.
 
 ---
 
+For **free** minute data — Yahoo, free broker APIs, bulk datasets — see
+**[FREE_DATA.md](FREE_DATA.md)**. This document covers paid depth.
+
 ## 2. Where to get deep Indian tick history
 
 Ordered by how likely they are to be the right answer for this project.

@@ -14,6 +14,7 @@ import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from afml_india.utils.logging import get_logger
@@ -167,6 +168,63 @@ class Snapshot:
         out = out.sort_values("date_time").set_index("date_time")
         out.index.name = "timestamp"
         return out
+
+    def has_intraday_bars(self, ticker: str | None = None) -> bool:
+        """True when the snapshot carries intraday bars rather than (or as well as) ticks."""
+        prefix = "intraday_bars/"
+        if ticker is None:
+            return any(n.startswith(prefix) for n in self._names)
+        return f"{prefix}{_stem(ticker)}.csv" in self._names
+
+    def intraday_bars(self, ticker: str) -> pd.DataFrame:
+        """Intraday OHLCV bars for one ticker, indexed by timestamp.
+
+        Present when the snapshot was built with ``--intraday-bars``, or from a
+        free minute-data source via ``scripts/build_snapshot_from_bars.py``.
+        """
+        frame = self._read_csv(f"intraday_bars/{_stem(ticker)}.csv")
+        frame["date_time"] = pd.to_datetime(frame["date_time"], format="mixed", utc=True)
+        frame["date_time"] = frame["date_time"].dt.tz_convert(self.tz)
+        frame = frame.sort_values("date_time").set_index("date_time")
+        frame.index.name = "timestamp"
+        return frame
+
+    def pseudo_ticks(self, ticker: str, price: str = "typical") -> pd.DataFrame:
+        """Intraday bars reshaped into a tick-like ``price``/``volume`` frame.
+
+        This is an **approximation, not a tape**. Each bar collapses to a single
+        synthetic transaction at its typical price carrying the bar's whole
+        volume, so within-bar path information — the sequencing that tick and
+        volume bars exist to capture — is gone. Bars built from it inherit the
+        source resolution as their floor: one-minute input cannot produce a bar
+        finer than one minute, however low the threshold.
+
+        It is still worth doing. Resampling minute bars into rupee-value bars
+        recovers much of the statistical benefit over a fixed clock, and it is
+        the only route available when tick data is out of reach. Just do not
+        report the result as tick-based.
+
+        Parameters
+        ----------
+        price:
+            ``"typical"`` uses (high + low + close) / 3, ``"close"`` uses the
+            close, ``"vwap"`` uses the bar's own VWAP when the source has one.
+        """
+        bars = self.intraday_bars(ticker)
+        if price == "vwap" and {"value", "volume"} <= set(bars.columns):
+            volume = bars["volume"].replace(0, np.nan)
+            series = (bars["value"] / volume).fillna(bars["close"])
+        elif price == "typical" and {"high", "low", "close"} <= set(bars.columns):
+            series = (bars["high"] + bars["low"] + bars["close"]) / 3.0
+        else:
+            series = bars["close"]
+
+        out = pd.DataFrame(
+            {"price": series.astype(float), "volume": bars["volume"].astype(float)},
+            index=bars.index,
+        )
+        out["type"] = "TRADE"
+        return out[out["volume"] > 0]
 
     def most_liquid(self, n: int = 1, kind: str = "trades") -> list[str]:
         """The ``n`` tickers with the most tick rows — a good default to experiment on."""

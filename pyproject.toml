@@ -24,7 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.7"]
-data = ["yfinance>=0.2.40", "pyarrow>=14.0"]
+data = ["yfinance>=0.2.40", "pyarrow>=14.0"]  # free intraday sources and Parquet
 dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.4"]
 deep = ["torch>=2.0"]
 notebooks = ["jupyterlab>=4.0", "nbformat>=5.9", "nbclient>=0.9", "matplotlib>=3.7"]

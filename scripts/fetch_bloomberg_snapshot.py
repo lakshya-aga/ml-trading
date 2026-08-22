@@ -119,6 +119,7 @@ class SnapshotConfig:
     list_members_only: bool = False
     tick_interval_minutes: int | None = None
     probe_only: bool = False
+    resume: bool = False
     offline_demo: bool = False
     demo_members: int = 5
     seed: int = 7
@@ -613,8 +614,10 @@ def probe_tick_availability(
                     "most_recent": None,
                     "oldest": None,
                     "retention_days": 0,
-                    "note": "no ticks in the last 14 days — an index, an unlisted "
-                    "security, or no tick entitlement",
+                    "bars_oldest": None,
+                    "bars_retention_days": 0,
+                    "note": "no ticks in the last 14 days - an index (indices have no "
+                    "trade tape), an unlisted security, or no tick entitlement",
                 }
             )
             continue
@@ -632,6 +635,31 @@ def probe_tick_availability(
                 lo = mid
 
         oldest = today - dt.timedelta(days=hi)
+
+        # Intraday bars are the practical fallback when ticks run out, so probe
+        # their retention too — it is usually the same window, but it is the
+        # number that decides what resolution the project can actually use.
+        def has_bars(day: dt.date, security: str = ticker) -> bool:
+            try:
+                return not fetch_intraday_bars(session, security, day, day, 1).empty
+            except Exception as exc:  # noqa: BLE001
+                LOG.debug("%s bars on %s: %s", security, day, exc)
+                return False
+
+        bar_lo, bar_hi = max_lookback_days, 1
+        bar_oldest = None
+        if has_bars(recent):
+            while bar_lo - bar_hi > 2:
+                mid = (bar_lo + bar_hi) // 2
+                day = today - dt.timedelta(days=mid)
+                while day.weekday() >= 5:
+                    day -= dt.timedelta(days=1)
+                if has_bars(day):
+                    bar_hi = mid
+                else:
+                    bar_lo = mid
+            bar_oldest = today - dt.timedelta(days=bar_hi)
+
         rows.append(
             {
                 "ticker": ticker,
@@ -639,10 +667,18 @@ def probe_tick_availability(
                 "most_recent": recent,
                 "oldest": oldest,
                 "retention_days": (today - oldest).days,
+                "bars_oldest": bar_oldest,
+                "bars_retention_days": (today - bar_oldest).days if bar_oldest else 0,
                 "note": "",
             }
         )
-        LOG.info("  %s: ticks back to %s (%d days)", ticker, oldest, (today - oldest).days)
+        LOG.info(
+            "  %s: ticks back to %s (%d days), 1-min bars back to %s",
+            ticker,
+            oldest,
+            (today - oldest).days,
+            bar_oldest or "n/a",
+        )
 
     return pd.DataFrame(rows)
 
@@ -708,6 +744,17 @@ def build_offline_demo(config: SnapshotConfig, root: Path) -> dict:
     """Generate a synthetic snapshot with the real schema and layout."""
     LOG.warning("Running in OFFLINE DEMO mode: all data below is synthetic.")
     rng = np.random.default_rng(config.seed)
+    write_manifest(
+        root,
+        {
+            "mode": "offline-demo",
+            "synthetic": True,
+            "status": "in_progress",
+            "index": config.index,
+            "as_of": str(config.asof),
+            "started_at": dt.datetime.now().isoformat(timespec="seconds"),
+        },
+    )
 
     demo_names = [
         ("RIL IN Equity", 9.8, 980.0),
@@ -794,6 +841,53 @@ def build_offline_demo(config: SnapshotConfig, root: Path) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+class ProgressReport:
+    """Append-only request log, flushed to disk as the pull runs.
+
+    Writing the report only at the end means a pull that is interrupted — or
+    merely still running — leaves no record of what succeeded. Flushing as we go
+    makes the snapshot inspectable from another terminal with
+    ``scripts/snapshot_status.py`` and makes ``--resume`` possible.
+    """
+
+    def __init__(self, path: Path, flush_every: int = 25) -> None:
+        self.path = path
+        self.flush_every = flush_every
+        self.rows: list[dict] = []
+        self._pending = 0
+        if not path.exists():
+            path.write_text("ticker,kind,day,rows,status\n")
+
+    def add(self, ticker: str, kind: str, day, rows: int, status: str) -> None:
+        self.rows.append(
+            {"ticker": ticker, "kind": kind, "day": day, "rows": rows, "status": status}
+        )
+        self._pending += 1
+        if self._pending >= self.flush_every:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._pending:
+            return
+        new = self.rows[-self._pending :]
+        with self.path.open("a") as handle:
+            for row in new:
+                # Commas cannot appear in these fields, but a Bloomberg error
+                # string can, so quote the status.
+                status = str(row["status"]).replace('"', "'")
+                handle.write(
+                    f'{row["ticker"]},{row["kind"]},{row["day"]},{row["rows"]},"{status}"\n'
+                )
+        self._pending = 0
+
+
+def write_manifest(root: Path, manifest: dict) -> None:
+    """Write the manifest atomically, so a reader never sees a half-written file."""
+    temporary = root / "manifest.json.tmp"
+    temporary.write_text(json.dumps(manifest, indent=2, default=str))
+    temporary.replace(root / "manifest.json")
+
+
 def _safe_name(ticker: str) -> str:
     """Filesystem-safe form of a Bloomberg ticker (``RIL IN Equity`` -> ``RIL_IN``)."""
     parts = ticker.split()
@@ -803,13 +897,21 @@ def _safe_name(ticker: str) -> str:
 
 
 def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
-    """Execute the full Bloomberg pull into ``root``."""
+    """Execute the full Bloomberg pull into ``root``.
+
+    The manifest is written before any data is requested and marked
+    ``in_progress``, so the tree is self-describing from the first second and
+    readable while the pull runs.
+    """
     manifest: dict = {
         "mode": "bloomberg",
         "synthetic": False,
+        "status": "in_progress",
         "index": config.index,
         "as_of": str(config.asof),
+        "started_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
+    write_manifest(root, manifest)
 
     with BloombergSession(config.host, config.port) as session:
         # 1. Universe: point-in-time membership, or an explicit list
@@ -845,7 +947,9 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
             manifest["mode"] = "list-members"
             return manifest
 
-        report_rows: list[dict] = []
+        manifest["tickers"] = tickers
+        write_manifest(root, manifest)
+        report = ProgressReport(root / "fetch_report.csv")
 
         # 2. Daily history over the full ten years
         if not config.skip_daily:
@@ -856,16 +960,10 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
             daily_dir.mkdir(parents=True, exist_ok=True)
             for ticker, frame in daily.items():
                 frame.to_csv(daily_dir / f"{_safe_name(ticker)}.csv")
-                report_rows.append(
-                    {
-                        "ticker": ticker,
-                        "kind": "daily",
-                        "day": "",
-                        "rows": len(frame),
-                        "status": "ok",
-                    }
-                )
+                report.add(ticker, "daily", "", len(frame), "ok")
+            report.flush()
             manifest["daily_tickers"] = len(daily)
+            write_manifest(root, manifest)
 
         # 3. Tick and trade data over the recent window
         if not config.skip_ticks:
@@ -899,28 +997,17 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
                         )
                     except Exception as exc:  # noqa: BLE001
                         LOG.warning("%s intraday bars failed: %s", ticker, exc)
-                        report_rows.append(
-                            {
-                                "ticker": ticker,
-                                "kind": "intraday_bar",
-                                "day": "",
-                                "rows": 0,
-                                "status": f"error: {exc}",
-                            }
-                        )
+                        report.add(ticker, "intraday_bar", "", 0, f"error: {exc}")
                         continue
                     status = "ok" if len(frame) else "empty"
                     if len(frame):
                         frame.to_csv(bar_dir / f"{_safe_name(ticker)}.csv", index=False)
-                    report_rows.append(
-                        {
-                            "ticker": ticker,
-                            "kind": "intraday_bar",
-                            "day": "",
-                            "rows": len(frame),
-                            "status": status,
-                        }
-                    )
+                    report.add(ticker, "intraday_bar", "", len(frame), status)
+                report.flush()
+
+            total_requests = len(tickers) * len(days) * 2
+            completed = 0
+            pull_started = dt.datetime.now()
 
             for kind, subdir, events in (
                 ("trade", "trades", TRADE_EVENTS),
@@ -929,46 +1016,57 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
                 out_dir = root / "ticks" / subdir
                 out_dir.mkdir(parents=True, exist_ok=True)
                 for n, ticker in enumerate(tickers, 1):
-                    LOG.info("[%d/%d] %s ticks for %s", n, len(tickers), kind, ticker)
                     for day in days:
+                        completed += 1
+                        path = out_dir / f"{_safe_name(ticker)}_{day:%Y%m%d}.csv"
+
+                        if config.resume and path.exists():
+                            continue
+
                         try:
                             frame = fetch_ticks(session, ticker, day, events)
                         except Exception as exc:  # noqa: BLE001 - one bad day must not kill the pull
                             LOG.warning("%s %s %s failed: %s", ticker, kind, day, exc)
-                            report_rows.append(
-                                {
-                                    "ticker": ticker,
-                                    "kind": kind,
-                                    "day": day,
-                                    "rows": 0,
-                                    "status": f"error: {exc}",
-                                }
-                            )
+                            report.add(ticker, kind, day, 0, f"error: {exc}")
                             continue
-                        if frame.empty:
-                            report_rows.append(
-                                {
-                                    "ticker": ticker,
-                                    "kind": kind,
-                                    "day": day,
-                                    "rows": 0,
-                                    "status": "empty",
-                                }
-                            )
-                            continue
-                        path = out_dir / f"{_safe_name(ticker)}_{day:%Y%m%d}.csv"
-                        frame.to_csv(path, index=False)
-                        report_rows.append(
-                            {
-                                "ticker": ticker,
-                                "kind": kind,
-                                "day": day,
-                                "rows": len(frame),
-                                "status": "ok",
-                            }
-                        )
 
-        pd.DataFrame(report_rows).to_csv(root / "fetch_report.csv", index=False)
+                        if frame.empty:
+                            report.add(ticker, kind, day, 0, "empty")
+                            continue
+
+                        frame.to_csv(path, index=False)
+                        report.add(ticker, kind, day, len(frame), "ok")
+
+                    # Progress is reported per ticker rather than per day: 40
+                    # tickers over 120 sessions is 9,600 requests, and a line
+                    # each would bury everything else.
+                    elapsed = (dt.datetime.now() - pull_started).total_seconds()
+                    rate = completed / max(elapsed, 1)
+                    remaining = total_requests - completed
+                    eta = dt.timedelta(seconds=int(remaining / rate)) if rate > 0 else "?"
+                    LOG.info(
+                        "%s ticks [%d/%d] %s | %d/%d requests (%.0f%%) | %.1f/min | ETA %s",
+                        kind,
+                        n,
+                        len(tickers),
+                        ticker,
+                        completed,
+                        total_requests,
+                        100 * completed / total_requests,
+                        rate * 60,
+                        eta,
+                    )
+                    report.flush()
+                    manifest["progress"] = {
+                        "completed_requests": completed,
+                        "total_requests": total_requests,
+                        "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+                    }
+                    write_manifest(root, manifest)
+
+        report.flush()
+        manifest["status"] = "complete"
+        write_manifest(root, manifest)
     return manifest
 
 
@@ -1064,6 +1162,16 @@ def main(argv: list[str] | None = None) -> int:
         "--keep-tree", action="store_true", help="Keep the uncompressed tree alongside the zip"
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Keep an existing tree and skip ticker-days already on disk",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Delete an existing tree even if it looks like a live pull",
+    )
+    parser.add_argument(
         "--offline-demo",
         action="store_true",
         help="Generate synthetic data instead of calling Bloomberg",
@@ -1105,10 +1213,35 @@ def main(argv: list[str] | None = None) -> int:
         list_members_only=args.list_members,
         tick_interval_minutes=args.intraday_bars,
         probe_only=args.probe,
+        resume=args.resume,
     )
 
     root = config.out_dir / config.label
-    if root.exists():
+    if root.exists() and not config.resume:
+        # A tree left behind by a pull that is still running, or that died
+        # partway, holds hours of downloaded data. Deleting it because someone
+        # re-ran the same command is the worst possible default.
+        manifest_path = root / "manifest.json"
+        live = False
+        if manifest_path.exists():
+            try:
+                live = json.loads(manifest_path.read_text()).get("status") == "in_progress"
+            except (OSError, json.JSONDecodeError):
+                live = True
+        existing = sum(1 for _ in root.rglob("*.csv"))
+
+        if (live or existing) and not args.overwrite:
+            LOG.error(
+                "%s already exists and holds %d CSV files%s.\n"
+                "  --resume    keep it and fetch only what is missing\n"
+                "  --overwrite delete it and start again\n"
+                "  --out DIR   write somewhere else\n"
+                "Refusing to delete it by default.",
+                root,
+                existing,
+                " (a pull may still be running)" if live else "",
+            )
+            return 1
         shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
 
@@ -1140,6 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     manifest["generated_at"] = dt.datetime.now().isoformat(timespec="seconds")
+    manifest["status"] = "complete"
     manifest["schema"] = {
         "index_members.csv": ["ticker", "weight", "as_of"],
         "daily/<TICKER>.csv": ["date", *[f.lower() for f in config.daily_fields]],

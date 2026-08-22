@@ -125,6 +125,35 @@ Output is one row per security: whether it has a trade tape, the oldest session 
 returned ticks, and the implied retention in days. Set `--tick-days` from that number
 rather than from the documented 140.
 
+### Watching a pull in progress
+
+A 40-ticker pull takes hours. You do not have to wait for the zip — the script
+writes each ticker-day to disk the moment it arrives, so the tree at
+`data/snapshots/<index>_<asof>/` is readable from another terminal while the pull
+runs:
+
+```bash
+python scripts/snapshot_status.py                 # progress, throughput, ETA
+python scripts/snapshot_status.py --watch 30      # refresh every 30s
+python scripts/snapshot_status.py --detail        # per-ticker file counts
+python scripts/snapshot_status.py --peek RIL_IN   # load what has landed for one name
+python scripts/snapshot_status.py --report        # every request and its outcome
+```
+
+Or read the partial data directly — `Snapshot` accepts a directory, not just a zip:
+
+```python
+from afml_india.research import Snapshot, build_bars
+snap = Snapshot("data/snapshots/nifty_index_20160822")   # no .zip: the live tree
+bars = build_bars(snap.ticks("RIL_IN", "trades"), kind="dollar", bars_per_day=50)
+```
+
+**Do not re-run the fetch script into the same `--out` while a pull is running.**
+It refuses by default now, but the reason matters: the second process would
+otherwise delete the tree the first is writing into. Use `--resume` to continue an
+interrupted pull (it skips ticker-days already on disk), `--overwrite` to start
+again deliberately, or `--out` to write elsewhere.
+
 ### Then start small
 
 Confirm entitlements on three names and five sessions before committing to the full pull:
@@ -160,6 +189,16 @@ Rough expectations for 50 names over 120 sessions:
 If that is too large, the useful knobs in order are `--tick-days`, `--max-members`, and
 dropping quotes (bars only need trades — quotes matter for spread and microstructure
 features).
+
+### How far back can I actually go?
+
+Short answer: **ticks and one-minute bars, ~140 days; daily, decades. There is no
+intraday product on the Desktop API that reaches further back** —
+`IntradayBarRequest` hits the same cliff as `IntradayTickRequest`.
+
+For the full picture — the limit per request type, and where deep Indian tick
+history is actually sold, including the qualification that Bloomberg *does* sell
+it but not through this API — see **[DATA_SOURCES.md](DATA_SOURCES.md)**.
 
 ### If tick data is not entitled
 

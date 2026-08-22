@@ -75,6 +75,12 @@ from afml_india.research import Snapshot
 snap = Snapshot("/path/to/nifty_index_20160822.zip")
 ```
 
+A pull takes hours; watch it in flight without waiting for the zip:
+
+```bash
+python scripts/snapshot_status.py --watch 30
+```
+
 ### One constraint worth knowing up front
 
 Bloomberg retains roughly **140 days** of intraday tick history. Tick data from ten
@@ -84,6 +90,10 @@ years ago is not obtainable over `blpapi` — confirmed on a live terminal in
 So a snapshot mixes horizons on purpose: a point-in-time member list from the as-of
 date, ten years of daily bars, and recent ticks for those same members. The manifest
 records it.
+
+Beyond that window the maximum resolution `blpapi` offers is **daily** —
+`IntradayBarRequest` hits the same cliff. [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)
+covers the limit per request type and where deep Indian tick history is actually sold.
 
 ---
 

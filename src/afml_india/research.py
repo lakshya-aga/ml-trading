@@ -67,7 +67,23 @@ from mlfinlab.sample_weights.attribution import (  # noqa: E402
 from mlfinlab.sampling.bootstrapping import get_ind_matrix, seq_bootstrap  # noqa: E402
 from mlfinlab.sampling.concurrent import get_av_uniqueness_from_triple_barrier  # noqa: E402
 from mlfinlab.structural_breaks import get_chu_stinchcombe_white_statistics, get_sadf  # noqa: E402
-from mlfinlab.util.volatility import get_daily_vol  # noqa: E402
+from mlfinlab.util.volatility import get_daily_vol as _get_daily_vol  # noqa: E402
+
+from afml_india._tz import tz_safe  # noqa: E402
+
+# fin-kit loses the timezone when it round-trips a DatetimeIndex through
+# ``.values``. Wrapping the affected entry points keeps IST-aware bars usable
+# everywhere downstream instead of forcing naive timestamps on the caller.
+get_daily_vol = tz_safe(_get_daily_vol)
+get_events = tz_safe(get_events)
+get_bins = tz_safe(get_bins)
+add_vertical_barrier = tz_safe(add_vertical_barrier)
+drop_labels = tz_safe(drop_labels)
+trend_scanning_labels = tz_safe(trend_scanning_labels)
+get_av_uniqueness_from_triple_barrier = tz_safe(get_av_uniqueness_from_triple_barrier)
+get_weights_by_return = tz_safe(get_weights_by_return)
+get_weights_by_time_decay = tz_safe(get_weights_by_time_decay)
+get_ind_matrix = tz_safe(get_ind_matrix)
 
 __all__ = [
     # India layer
@@ -153,7 +169,19 @@ def sample_events(
         logger.info("CUSUM threshold set to %.5f (%.1fx median daily vol)", threshold, vol_multiple)
 
     series = np.log(close) if log_prices else close
-    events = cusum_filter(series, threshold=threshold)
+    # cusum_filter rebuilds its result as a bare DatetimeIndex and loses the
+    # timezone on the way, which then fails to align with the tz-aware bars it
+    # came from. Run it on a naive copy and map the hits back by position.
+    tz = series.index.tz
+    naive = series.copy()
+    if tz is not None:
+        naive.index = naive.index.tz_localize(None)
+
+    hits = cusum_filter(naive, threshold=threshold)
+    positions = naive.index.get_indexer(pd.DatetimeIndex(hits))
+    positions = np.unique(positions[positions >= 0])
+    events = close.index[positions]
+
     rate = 100.0 * len(events) / max(1, len(close))
     logger.info("Sampled %d events from %d bars (%.1f%%)", len(events), len(close), rate)
     if rate > 50:

@@ -264,7 +264,7 @@ class TickerPipeline:
         trained on 50-bar horizons at 50 bars a day is effectively fitting a
         much smaller sample than its row count suggests.
         """
-        from mlfinlab.sampling.concurrent import (  # noqa: PLC0415
+        from afml_india.research import (  # noqa: PLC0415
             get_av_uniqueness_from_triple_barrier,
         )
 
@@ -279,7 +279,11 @@ class TickerPipeline:
         except Exception as exc:  # noqa: BLE001 - weighting is an enhancement, not a gate
             logger.warning("%s: uniqueness weighting failed (%s); using equal weights", ticker, exc)
             return None
-        weights = uniqueness["tW"].reindex(labels.index)
+        # fin-kit returns a bare Series here; upstream mlfinlab releases return a
+        # frame with a 'tW' column. Accept either.
+        if isinstance(uniqueness, pd.DataFrame):
+            uniqueness = uniqueness["tW"] if "tW" in uniqueness.columns else uniqueness.iloc[:, 0]
+        weights = uniqueness.reindex(labels.index)
         logger.info(
             "%s: mean average-uniqueness %.3f (1.0 would mean no overlap)",
             ticker, float(weights.mean()),

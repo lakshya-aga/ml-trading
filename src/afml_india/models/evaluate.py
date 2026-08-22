@@ -99,8 +99,9 @@ class WalkForwardSplit:
 
             if len(train_idx) < self.min_train:
                 logger.warning(
-                    "Fold %d has only %d training samples after purge; skipping",
-                    i, len(train_idx),
+                    "Split %d of %d has only %d training samples after purge; skipping "
+                    "(it will not appear in the fold results)",
+                    i, self.n_splits, len(train_idx),
                 )
                 continue
             yield train_idx, test_idx
@@ -200,7 +201,13 @@ def walk_forward_evaluate(
         )
 
     if not rows:
-        raise RuntimeError("no fold produced enough training data; loosen the splitter")
+        raise RuntimeError(
+            f"no fold produced enough training data: {len(spans)} samples across "
+            f"{splitter.n_splits} splits with min_train={splitter.min_train}. "
+            "Purging removes training samples that overlap the test window, so the "
+            "usable count is well below the nominal one — lower min_train or "
+            "n_splits, shorten the label horizon, or build more bars."
+        )
 
     fold_metrics = pd.DataFrame(rows).set_index("fold")
     predictions = pd.concat(prediction_frames).sort_index()

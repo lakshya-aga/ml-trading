@@ -118,6 +118,7 @@ class SnapshotConfig:
     tickers_file: Path | None = None
     list_members_only: bool = False
     tick_interval_minutes: int | None = None
+    probe_only: bool = False
     offline_demo: bool = False
     demo_members: int = 5
     seed: int = 7
@@ -550,6 +551,94 @@ def business_days(start: dt.date, end: dt.date) -> list[dt.date]:
 
 
 # --------------------------------------------------------------------------- #
+# Entitlement and retention probe
+# --------------------------------------------------------------------------- #
+
+
+def probe_tick_availability(
+    session: BloombergSession,
+    tickers: list[str],
+    max_lookback_days: int = 400,
+) -> pd.DataFrame:
+    """Find out what tick data this terminal will actually return.
+
+    Two things this settles before a multi-hour pull, both of which are cheaper
+    to discover now than halfway through:
+
+    1. **Which securities have a trade tape at all.** An index does not — there
+       are no trades in ``NIFTY Index``, only in its constituents and its
+       futures. Pointing a tick request at an index returns an empty response
+       that looks identical to a permissions failure.
+    2. **How far back tick history actually goes.** Bloomberg documents roughly
+       140 days, but the effective boundary depends on the terminal, so it is
+       located here by bisection rather than assumed.
+
+    Returns one row per ticker with the most recent session that returned ticks,
+    the oldest that did, and the implied retention in days.
+    """
+    today = dt.date.today()
+    rows = []
+
+    for ticker in tickers:
+        LOG.info("Probing %s", ticker)
+
+        def has_ticks(day: dt.date, security: str = ticker) -> bool:
+            try:
+                return not fetch_ticks(session, security, day, TRADE_EVENTS).empty
+            except Exception as exc:  # noqa: BLE001
+                LOG.debug("%s on %s: %s", security, day, exc)
+                return False
+
+        # Find a recent session that works at all; a run of holidays or a
+        # missing tape both look like "no data" on any single day.
+        recent = None
+        for back in range(1, 15):
+            day = today - dt.timedelta(days=back)
+            if day.weekday() >= 5:
+                continue
+            if has_ticks(day):
+                recent = day
+                break
+
+        if recent is None:
+            rows.append({
+                "ticker": ticker,
+                "has_trade_tape": False,
+                "most_recent": None,
+                "oldest": None,
+                "retention_days": 0,
+                "note": "no ticks in the last 14 days — an index, an unlisted "
+                        "security, or no tick entitlement",
+            })
+            continue
+
+        # Bisect for the oldest session that still returns ticks.
+        lo, hi = max_lookback_days, 1  # lo = known-bad, hi = known-good, in days back
+        while lo - hi > 2:
+            mid = (lo + hi) // 2
+            day = today - dt.timedelta(days=mid)
+            while day.weekday() >= 5:
+                day -= dt.timedelta(days=1)
+            if has_ticks(day):
+                hi = mid
+            else:
+                lo = mid
+
+        oldest = today - dt.timedelta(days=hi)
+        rows.append({
+            "ticker": ticker,
+            "has_trade_tape": True,
+            "most_recent": recent,
+            "oldest": oldest,
+            "retention_days": (today - oldest).days,
+            "note": "",
+        })
+        LOG.info("  %s: ticks back to %s (%d days)", ticker, oldest, (today - oldest).days)
+
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
 # Offline demo data
 # --------------------------------------------------------------------------- #
 
@@ -726,6 +815,15 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
         tickers = members["ticker"].tolist()
         manifest["members"] = len(tickers)
 
+        if config.probe_only:
+            probe_tickers = tickers[: config.max_members or 5]
+            report = probe_tick_availability(session, probe_tickers)
+            report.to_csv(root / "tick_probe.csv", index=False)
+            print("\nTick availability on this terminal:")
+            print(report.to_string(index=False))
+            manifest["mode"] = "probe"
+            return manifest
+
         if config.list_members_only:
             LOG.info("Resolved %d members; --list-members set, stopping here", len(tickers))
             for n, ticker in enumerate(tickers, 1):
@@ -857,6 +955,9 @@ def main(argv: list[str] | None = None) -> int:
                              "instead of resolving point-in-time index membership")
     parser.add_argument("--list-members", action="store_true",
                         help="Resolve and print the universe, then stop (no data pulled)")
+    parser.add_argument("--probe", action="store_true",
+                        help="Report which securities have a trade tape and how far back "
+                             "tick history actually goes on this terminal, then stop")
     parser.add_argument("--intraday-bars", type=int, default=None, metavar="MINUTES",
                         help="Also pull N-minute intraday bars. Use when tick data is "
                              "not entitled: same ~140-day retention, far wider access")
@@ -897,6 +998,7 @@ def main(argv: list[str] | None = None) -> int:
         tickers_file=args.tickers_file,
         list_members_only=args.list_members,
         tick_interval_minutes=args.intraday_bars,
+        probe_only=args.probe,
     )
 
     root = config.out_dir / config.label
@@ -914,6 +1016,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.verbose:
             raise
         return 1
+
+    if manifest.get("mode") == "probe":
+        destination = config.out_dir / f"{config.label}_tick_probe.csv"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(root / "tick_probe.csv", destination)
+        shutil.rmtree(root)
+        print(f"\nProbe written to {destination}")
+        return 0
 
     if manifest.get("mode") == "list-members":
         listing = config.out_dir / f"{config.label}_members.csv"

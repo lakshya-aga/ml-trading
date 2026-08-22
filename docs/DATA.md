@@ -17,11 +17,46 @@ research actually runs.
 | Quote ticks | `IntradayTickRequest`, `BID`/`ASK` | last ~140 days | microstructure features |
 | Intraday bars *(fallback)* | `IntradayBarRequest` | last ~140 days | when ticks are not entitled |
 
-### The 140-day limit is real and unavoidable
+### The 140-day limit is real and unavoidable — confirmed on this terminal
 
 Bloomberg retains roughly **140 calendar days** of intraday tick and bar history.
 Tick data from ten years ago cannot be retrieved over `blpapi` at any price — the
 limit is server-side, not a script restriction.
+
+This is not a documentation claim we are taking on trust. `bloomberg_test.ipynb` in
+this repo runs an `IntradayTickRequest` against `N50FUTPR Index` for
+2020-08-21 to 2020-08-30 on a live terminal, and the response is:
+
+```
+IntradayTickResponse = {
+    tickData = {
+        eidData[] = { }
+        tickData[] = { }
+    }
+}
+```
+
+Empty. No error, no permission failure — the data simply is not retained.
+
+Find your own terminal's actual boundary rather than assuming 140:
+
+```bash
+python scripts/fetch_bloomberg_snapshot.py --probe --max-members 5
+```
+
+That bisects for the oldest session that still returns ticks, per security, and
+writes `data/snapshots/<label>_tick_probe.csv`.
+
+### Indices have no trade tape
+
+The same test notebook requests ticks for `NIFTY Index` and gets nothing back. That is
+expected and is not an entitlement problem: an index is a computed level, so there are
+no trades in it. Tick data exists for its **constituents** (`RIL IN Equity`) and for
+its **futures** (`N50FUTPR Index`).
+
+The `--probe` output distinguishes the two cases — a security with no trade tape is
+reported as `has_trade_tape=False` rather than as a retention limit — so you find out
+in seconds instead of at the end of a long pull.
 
 So the snapshot deliberately mixes horizons:
 
@@ -78,7 +113,19 @@ pip install --index-url https://blpapi.bloomberg.com/repository/releases/python/
 pip install pandas numpy
 ```
 
-### Start small
+### Probe first
+
+Before anything else, find out what this terminal will actually return:
+
+```bash
+python scripts/fetch_bloomberg_snapshot.py --probe --asof 2016-08-22 --max-members 5
+```
+
+Output is one row per security: whether it has a trade tape, the oldest session that
+returned ticks, and the implied retention in days. Set `--tick-days` from that number
+rather than from the documented 140.
+
+### Then start small
 
 Confirm entitlements on three names and five sessions before committing to the full pull:
 
@@ -231,13 +278,16 @@ print(snap.tick_days(snap.tickers[0]))       # sessions available for one name
 # 1. Confirm the universe
 python scripts/fetch_bloomberg_snapshot.py --list-members --asof 2016-08-22
 
-# 2. Trial run
+# 2. Find this terminal's real tick retention
+python scripts/fetch_bloomberg_snapshot.py --probe --asof 2016-08-22 --max-members 5
+
+# 3. Trial run
 python scripts/fetch_bloomberg_snapshot.py --asof 2016-08-22 --max-members 3 --tick-days 5 -v
 
-# 3. Full pull
+# 4. Full pull, with --tick-days set from the probe
 python scripts/fetch_bloomberg_snapshot.py --asof 2016-08-22 --tick-days 120
 
-# 4. Run the notebooks against it
+# 5. Run the notebooks against it
 jupyter lab notebooks/
 ```
 

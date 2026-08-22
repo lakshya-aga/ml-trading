@@ -13,6 +13,8 @@ a rising market that control is a much harder benchmark than it sounds.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -315,3 +317,261 @@ def control_portfolios(
 def default_cost_model() -> CostModel:
     """Delivery-segment cost model, the right default for a monthly portfolio."""
     return CostModel(segment=Segment.DELIVERY)
+
+
+# --------------------------------------------------------------------------- #
+# Signal backtesting and return attribution
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class BacktestResult:
+    """Output of :func:`backtest_signals`, kept together so attribution is easy."""
+
+    weights: pd.DataFrame
+    gross_returns: pd.Series
+    net_returns: pd.Series
+    costs: pd.Series
+    turnover: pd.Series
+    contributions: pd.DataFrame
+    realised_returns: pd.DataFrame
+
+    @property
+    def equity(self) -> pd.DataFrame:
+        """Cumulative gross and net equity curves, both starting at 1.0."""
+        return pd.DataFrame(
+            {
+                "gross": (1.0 + self.gross_returns).cumprod(),
+                "net": (1.0 + self.net_returns).cumprod(),
+            }
+        )
+
+    def summary(self, periods_per_year: int = 12, risk_free_rate: float = 0.065) -> pd.Series:
+        """Headline performance, gross and net, plus turnover and cost drag."""
+        equity = self.equity
+        gross = performance_summary(equity["gross"], periods_per_year, risk_free_rate)
+        net = performance_summary(equity["net"], periods_per_year, risk_free_rate)
+        out = pd.concat(
+            [gross.add_prefix("gross_"), net.add_prefix("net_")]
+        )
+        out["total_costs"] = float(self.costs.sum())
+        out["mean_turnover"] = float(self.turnover.mean())
+        out["cost_drag"] = float(gross["total_return"] - net["total_return"])
+        out["hit_rate"] = float((self.net_returns > 0).mean())
+        return out
+
+
+def signal_weights(
+    expected: pd.Series,
+    mode: str = "long_only",
+    max_weight: float | None = None,
+) -> pd.Series:
+    """Convert one period's expected returns into portfolio weights.
+
+    Parameters
+    ----------
+    mode:
+        ``"long_only"`` allocates in proportion to positive expected return and
+        holds nothing otherwise; ``"long_short"`` goes long the above-median
+        names and short the rest, gross exposure normalised to one;
+        ``"equal"`` ignores the signal entirely and is the control.
+
+    Notes
+    -----
+    Long-only returns an all-zero vector when nothing is expected to rise. That
+    is a real decision — sit in cash — not an error, and the backtest treats it
+    as a flat period rather than silently reverting to equal weight.
+    """
+    expected = expected.dropna()
+    if expected.empty:
+        return pd.Series(dtype=float)
+
+    if mode == "equal":
+        weights = pd.Series(1.0 / len(expected), index=expected.index)
+    elif mode == "long_only":
+        positive = expected.clip(lower=0.0)
+        total = positive.sum()
+        weights = positive / total if total > 0 else positive * 0.0
+    elif mode == "long_short":
+        centred = expected - expected.median()
+        gross = centred.abs().sum()
+        weights = centred / gross if gross > 0 else centred * 0.0
+    else:
+        raise ValueError(f"unknown mode {mode!r}; expected long_only, long_short or equal")
+
+    if max_weight is not None and weights.abs().sum() > 0:
+        weights = _cap_and_redistribute(weights, max_weight)
+    return weights
+
+
+def _cap_and_redistribute(weights: pd.Series, max_weight: float) -> pd.Series:
+    """Cap each position, pushing the excess onto the names with room.
+
+    Clipping and then renormalising would undo the cap — that is the obvious
+    implementation and it is wrong. When no name has room left (a single
+    positive signal under a 40% cap, say), the residual stays **uninvested**
+    rather than being forced back into the capped position: holding cash is the
+    honest reading of "do not put more than 40% in one name".
+    """
+    capped = weights.copy()
+    for _ in range(len(capped) + 1):
+        over = capped.abs() > max_weight + 1e-12
+        if not over.any():
+            break
+        excess = float((capped[over].abs() - max_weight).sum())
+        capped[over] = np.sign(capped[over]) * max_weight
+
+        # Only names already on the same side of the book can absorb the excess;
+        # redistributing into an unsignalled name would be inventing a position.
+        room = (max_weight - capped[~over].abs()).clip(lower=0.0)
+        available = float(room[capped[~over] != 0].sum())
+        if available <= 1e-12:
+            break  # nothing can absorb it: the remainder sits in cash
+        share = room.where(capped[~over] != 0, 0.0)
+        capped[~over] = capped[~over] + np.sign(capped[~over]) * excess * share / available
+    return capped
+
+
+def backtest_signals(
+    prices: pd.DataFrame,
+    expected: pd.DataFrame,
+    mode: str = "long_only",
+    max_weight: float | None = None,
+    cost_model: CostModel | None = None,
+    lag: int = 0,
+) -> BacktestResult:
+    """Backtest one-step-ahead return forecasts as a rebalanced portfolio.
+
+    Parameters
+    ----------
+    prices:
+        Realised prices, wide (dates x symbols).
+    expected:
+        Predicted return **for** each date, aligned to ``prices``. A value at
+        date ``t`` is the return expected to be earned over the period ending at
+        ``t``, so the position it implies must be taken at ``t - 1``.
+    lag:
+        Extra periods of delay between forming a signal and trading it. Zero
+        assumes the forecast for ``t`` is actionable at ``t - 1``, which is
+        correct for a one-step-ahead model built from data through ``t - 1``.
+        Raise it to test sensitivity to execution delay.
+    cost_model:
+        Charges turnover each period. ``None`` reports gross returns only.
+
+    Returns
+    -------
+    BacktestResult
+        Weights, gross and net returns, costs, turnover and the per-stock
+        contribution to each period's return.
+    """
+    prices = prices.sort_index()
+    realised = prices.pct_change()
+
+    common = expected.index.intersection(realised.index)
+    if len(common) == 0:
+        raise ValueError("expected returns and prices share no dates")
+    expected = expected.loc[common]
+    realised = realised.loc[common]
+
+    weight_rows, dates = [], []
+    for stamp in common:
+        row = expected.loc[stamp].dropna()
+        weights = signal_weights(row, mode=mode, max_weight=max_weight)
+        weight_rows.append(weights.reindex(prices.columns).fillna(0.0))
+        dates.append(stamp)
+
+    weights = pd.DataFrame(weight_rows, index=pd.DatetimeIndex(dates))
+    if lag:
+        weights = weights.shift(lag).fillna(0.0)
+
+    contributions = weights * realised.reindex(columns=weights.columns).fillna(0.0)
+    gross = contributions.sum(axis=1)
+
+    # Turnover is the change in the held book, so the first period's cost is the
+    # cost of establishing it.
+    previous = weights.shift(1).fillna(0.0)
+    turnover = (weights - previous).abs().sum(axis=1) / 2.0
+
+    if cost_model is None:
+        costs = pd.Series(0.0, index=weights.index)
+    else:
+        # One-way turnover pays about half a round trip.
+        costs = turnover * cost_model.round_trip_bps() / 1e4 / 2.0
+
+    return BacktestResult(
+        weights=weights,
+        gross_returns=gross,
+        net_returns=gross - costs,
+        costs=costs,
+        turnover=turnover,
+        contributions=contributions,
+        realised_returns=realised,
+    )
+
+
+def attribution(result: BacktestResult) -> pd.DataFrame:
+    """Per-stock breakdown of where the return came from.
+
+    Contribution is the sum of ``weight * realised return`` over the backtest —
+    it adds up to the gross return, which is what makes it an attribution rather
+    than a set of unrelated statistics. Reading it is how you find out whether a
+    result is broad or is one name carrying everything.
+    """
+    contributions = result.contributions
+    weights = result.weights
+
+    frame = pd.DataFrame(
+        {
+            "contribution": contributions.sum(),
+            "mean_weight": weights.mean(),
+            "max_weight": weights.abs().max(),
+            "periods_held": (weights.abs() > 1e-12).sum(),
+            "hit_rate": (contributions > 0).sum() / (weights.abs() > 1e-12).sum().replace(0, np.nan),
+            "mean_return_when_held": (
+                result.realised_returns.where(weights.abs() > 1e-12).mean()
+            ),
+        }
+    )
+    total = frame["contribution"].sum()
+    frame["share_of_gross"] = frame["contribution"] / total if total != 0 else np.nan
+    return frame.sort_values("contribution", ascending=False)
+
+
+def decompose_vs_equal_weight(
+    result: BacktestResult,
+    equal_result: BacktestResult | None = None,
+) -> pd.Series:
+    """Split net return into the equal-weight baseline, selection and costs.
+
+    ``net = equal_weight_baseline + selection_effect - costs``
+
+    The selection effect is the part attributable to *deviating* from equal
+    weight. It is the only component a forecast can claim credit for, and it is
+    routinely much smaller than the baseline — which is the honest reason so
+    many signal-driven portfolios fail to justify themselves.
+    """
+    realised = result.realised_returns
+    baseline = realised.mean(axis=1).fillna(0.0)
+    selection = result.gross_returns - baseline
+
+    def compound(series: pd.Series) -> float:
+        return float((1.0 + series).prod() - 1.0)
+
+    out = pd.Series(
+        {
+            "equal_weight_baseline": compound(baseline),
+            "gross_strategy": compound(result.gross_returns),
+            "selection_effect": compound(result.gross_returns) - compound(baseline),
+            "total_costs": float(result.costs.sum()),
+            "net_strategy": compound(result.net_returns),
+            "selection_per_period": float(selection.mean()),
+            "selection_t_stat": (
+                float(selection.mean() / selection.std(ddof=1) * np.sqrt(len(selection)))
+                if selection.std(ddof=1) > 0
+                else float("nan")
+            ),
+        }
+    )
+    if equal_result is not None:
+        out["equal_weight_net"] = compound(equal_result.net_returns)
+    return out

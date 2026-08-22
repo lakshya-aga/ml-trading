@@ -1,0 +1,51 @@
+nse_symbol,bloomberg_ticker,company,sector
+ADANIENT,ADE IN Equity,Adani Enterprises,Conglomerate
+ADANIPORTS,ADSEZ IN Equity,Adani Ports & SEZ,Infrastructure
+APOLLOHOSP,APHS IN Equity,Apollo Hospitals,Healthcare
+ASIANPAINT,APNT IN Equity,Asian Paints,Materials
+AXISBANK,AXSB IN Equity,Axis Bank,Financials
+BAJAJ-AUTO,BJAUT IN Equity,Bajaj Auto,Automobiles
+BAJFINANCE,BAF IN Equity,Bajaj Finance,Financials
+BAJAJFINSV,BJFIN IN Equity,Bajaj Finserv,Financials
+BEL,BHE IN Equity,Bharat Electronics,Industrials
+BHARTIARTL,BHARTI IN Equity,Bharti Airtel,Telecom
+BPCL,BPCL IN Equity,Bharat Petroleum,Energy
+BRITANNIA,BRIT IN Equity,Britannia Industries,Consumer Staples
+CIPLA,CIPLA IN Equity,Cipla,Healthcare
+COALINDIA,COAL IN Equity,Coal India,Energy
+DIVISLAB,DIVI IN Equity,Divi's Laboratories,Healthcare
+DRREDDY,DRRD IN Equity,Dr Reddy's Laboratories,Healthcare
+EICHERMOT,EIM IN Equity,Eicher Motors,Automobiles
+GRASIM,GRASIM IN Equity,Grasim Industries,Materials
+HCLTECH,HCLT IN Equity,HCL Technologies,Information Technology
+HDFCBANK,HDFCB IN Equity,HDFC Bank,Financials
+HDFCLIFE,HDFCLIFE IN Equity,HDFC Life Insurance,Financials
+HEROMOTOCO,HMCL IN Equity,Hero MotoCorp,Automobiles
+HINDALCO,HNDL IN Equity,Hindalco Industries,Materials
+HINDUNILVR,HUVR IN Equity,Hindustan Unilever,Consumer Staples
+ICICIBANK,ICICIBC IN Equity,ICICI Bank,Financials
+INDUSINDBK,IIB IN Equity,IndusInd Bank,Financials
+INFY,INFO IN Equity,Infosys,Information Technology
+ITC,ITC IN Equity,ITC,Consumer Staples
+JSWSTEEL,JSTL IN Equity,JSW Steel,Materials
+KOTAKBANK,KMB IN Equity,Kotak Mahindra Bank,Financials
+LT,LT IN Equity,Larsen & Toubro,Industrials
+M&M,MM IN Equity,Mahindra & Mahindra,Automobiles
+MARUTI,MSIL IN Equity,Maruti Suzuki India,Automobiles
+NESTLEIND,NEST IN Equity,Nestle India,Consumer Staples
+NTPC,NTPC IN Equity,NTPC,Utilities
+ONGC,ONGC IN Equity,Oil & Natural Gas Corp,Energy
+POWERGRID,PWGR IN Equity,Power Grid Corp,Utilities
+RELIANCE,RIL IN Equity,Reliance Industries,Energy
+SBILIFE,SBILIFE IN Equity,SBI Life Insurance,Financials
+SBIN,SBIN IN Equity,State Bank of India,Financials
+SHRIRAMFIN,SHFL IN Equity,Shriram Finance,Financials
+SUNPHARMA,SUNP IN Equity,Sun Pharmaceutical,Healthcare
+TATACONSUM,TATACONS IN Equity,Tata Consumer Products,Consumer Staples
+TATAMOTORS,TTMT IN Equity,Tata Motors,Automobiles
+TATASTEEL,TATA IN Equity,Tata Steel,Materials
+TCS,TCS IN Equity,Tata Consultancy Services,Information Technology
+TECHM,TECHM IN Equity,Tech Mahindra,Information Technology
+TITAN,TTAN IN Equity,Titan Company,Consumer Discretionary
+TRENT,TRENT IN Equity,Trent,Consumer Discretionary
+ULTRACEMCO,UTCEM IN Equity,UltraTech Cement,Materials

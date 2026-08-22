@@ -14,6 +14,20 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
+class _PipelineWithWeights(Pipeline):
+    """Pipeline that forwards ``sample_weight`` to its final step.
+
+    ``Pipeline.fit`` rejects a bare ``sample_weight``; it must be namespaced to
+    the step that consumes it. Doing that here keeps every baseline callable
+    with the same signature as the LSTM.
+    """
+
+    def fit(self, X, y=None, sample_weight=None, **kwargs):
+        if sample_weight is not None:
+            kwargs[f"{self.steps[-1][0]}__sample_weight"] = sample_weight
+        return super().fit(X, y, **kwargs)
+
+
 class FlattenAdapter:
     """Wrap a tabular sklearn estimator so it accepts 3D sequence input.
 
@@ -36,8 +50,12 @@ class FlattenAdapter:
 
     def fit(self, X, y, sample_weight=None):
         flat = self._reshape(X)
-        self.estimator.fit(flat, y, **({"sample_weight": sample_weight} if sample_weight is not None else {}))
-        self.classes_ = self.estimator.classes_
+        kwargs = {"sample_weight": sample_weight} if sample_weight is not None else {}
+        self.estimator.fit(flat, y, **kwargs)
+        # A Pipeline exposes classes_ only via its final step.
+        self.classes_ = getattr(
+            self.estimator, "classes_", getattr(self.estimator[-1], "classes_", None)
+        )
         return self
 
     def predict_proba(self, X):
@@ -78,7 +96,7 @@ def random_forest(
 def logistic(seed: int = 0, last_only: bool = True, C: float = 0.1) -> FlattenAdapter:
     """Regularised logistic regression — the floor any model must clear."""
     return FlattenAdapter(
-        Pipeline(
+        _PipelineWithWeights(
             [
                 ("scale", StandardScaler()),
                 ("clf", LogisticRegression(C=C, max_iter=2000, class_weight="balanced", random_state=seed)),
@@ -87,11 +105,3 @@ def logistic(seed: int = 0, last_only: bool = True, C: float = 0.1) -> FlattenAd
         last_only=last_only,
     )
 
-
-class _PipelineWithWeights(Pipeline):
-    """Pipeline that forwards ``sample_weight`` to its final estimator."""
-
-    def fit(self, X, y=None, sample_weight=None, **kwargs):
-        if sample_weight is not None:
-            kwargs[f"{self.steps[-1][0]}__sample_weight"] = sample_weight
-        return super().fit(X, y, **kwargs)

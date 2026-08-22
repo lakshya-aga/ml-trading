@@ -204,7 +204,7 @@ class LSTMClassifier:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
                 optimiser.step()
-                epoch_loss += float(loss) * len(idx)
+                epoch_loss += float(loss.detach()) * len(idx)
                 seen += len(idx)
             train_loss = epoch_loss / max(seen, 1)
 

@@ -115,6 +115,9 @@ class SnapshotConfig:
     skip_ticks: bool = False
     skip_daily: bool = False
     keep_tree: bool = False
+    tickers_file: Path | None = None
+    list_members_only: bool = False
+    tick_interval_minutes: int | None = None
     offline_demo: bool = False
     demo_members: int = 5
     seed: int = 7
@@ -309,6 +312,35 @@ def fetch_index_members(
     return frame
 
 
+def load_ticker_file(path: Path) -> pd.DataFrame:
+    """Read a universe from a CSV, accepting either a plain or a mapped layout.
+
+    A ``bloomberg_ticker`` column is used directly. Failing that, a ``ticker``
+    column is used. An ``nse_symbol`` column alone is not enough — Bloomberg
+    tickers are not derivable from NSE symbols by any rule (``INFY`` is
+    ``INFO IN``, ``HDFCBANK`` is ``HDFCB IN``), so the script refuses to guess.
+    """
+    frame = pd.read_csv(path)
+    columns = {c.strip().lower(): c for c in frame.columns}
+
+    for candidate in ("bloomberg_ticker", "ticker"):
+        if candidate in columns:
+            out = pd.DataFrame({"ticker": frame[columns[candidate]].map(qualify_ticker)})
+            for extra in ("nse_symbol", "company", "sector", "weight"):
+                if extra in columns:
+                    out[extra] = frame[columns[extra]]
+            if "weight" not in out.columns:
+                out["weight"] = float("nan")
+            LOG.info("Loaded %d tickers from %s", len(out), path)
+            return out
+
+    raise ValueError(
+        f"{path} needs a 'bloomberg_ticker' or 'ticker' column. Found: "
+        f"{sorted(frame.columns)}. An nse_symbol column alone is not usable — "
+        "Bloomberg tickers cannot be derived from NSE symbols."
+    )
+
+
 def qualify_ticker(ticker: str, default_market_sector: str = "Equity") -> str:
     """Append the market sector when ``ticker`` lacks one (``RIL IN`` -> ``RIL IN Equity``)."""
     ticker = str(ticker).strip()
@@ -438,6 +470,53 @@ def fetch_ticks(
     # Bloomberg returns tick times in UTC; convert to IST so the data lines up
     # with the 09:15-15:30 session everyone actually reasons about.
     frame["date_time"] = frame["date_time"].dt.tz_convert("Asia/Kolkata")
+    return frame.sort_values("date_time").reset_index(drop=True)
+
+
+def fetch_intraday_bars(
+    session: BloombergSession,
+    ticker: str,
+    start: dt.date,
+    end: dt.date,
+    interval_minutes: int = 1,
+) -> pd.DataFrame:
+    """Intraday OHLCV bars, as a fallback when tick data is not entitled.
+
+    ``IntradayBarRequest`` carries the same ~140-day retention as tick data but
+    is entitled far more widely, and one-minute bars still resample into
+    respectable rupee-value bars — you lose the true trade tape, not the method.
+    """
+    request = session.create_request("IntradayBarRequest")
+    request.set("security", ticker)
+    request.set("eventType", "TRADE")
+    request.set("interval", int(interval_minutes))
+    request.set("startDateTime", dt.datetime.combine(start, SESSION_START_UTC))
+    request.set("endDateTime", dt.datetime.combine(end, SESSION_END_UTC))
+    request.set("gapFillInitialBar", False)
+
+    rows: list[dict] = []
+    for msg in session.send(request):
+        if not msg.hasElement("barData"):
+            continue
+        for bar in msg.getElement("barData").getElement("barTickData").values():
+            rows.append(
+                {
+                    "date_time": _element_value(bar, "time"),
+                    "open": _element_value(bar, "open"),
+                    "high": _element_value(bar, "high"),
+                    "low": _element_value(bar, "low"),
+                    "close": _element_value(bar, "close"),
+                    "volume": _element_value(bar, "volume", 0),
+                    "num_events": _element_value(bar, "numEvents", 0),
+                    "value": _element_value(bar, "value", 0),
+                }
+            )
+    if not rows:
+        return pd.DataFrame(
+            columns=["date_time", "open", "high", "low", "close", "volume", "num_events", "value"]
+        )
+    frame = pd.DataFrame(rows)
+    frame["date_time"] = pd.to_datetime(frame["date_time"], utc=True).dt.tz_convert("Asia/Kolkata")
     return frame.sort_values("date_time").reset_index(drop=True)
 
 
@@ -630,13 +709,29 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
     }
 
     with BloombergSession(config.host, config.port) as session:
-        # 1. Point-in-time composition
-        members = fetch_index_members(session, config.index, config.asof)
+        # 1. Universe: point-in-time membership, or an explicit list
+        if config.tickers_file is not None:
+            members = load_ticker_file(config.tickers_file)
+            members["as_of"] = pd.Timestamp(config.asof)
+            manifest["universe_source"] = str(config.tickers_file)
+            manifest["point_in_time"] = False
+        else:
+            members = fetch_index_members(session, config.index, config.asof)
+            manifest["universe_source"] = f"INDX_MWEIGHT_HIST @ {config.asof}"
+            manifest["point_in_time"] = True
+
         if config.max_members:
             members = members.head(config.max_members)
         members.to_csv(root / "index_members.csv", index=False)
         tickers = members["ticker"].tolist()
         manifest["members"] = len(tickers)
+
+        if config.list_members_only:
+            LOG.info("Resolved %d members; --list-members set, stopping here", len(tickers))
+            for n, ticker in enumerate(tickers, 1):
+                print(f"{n:>3}. {ticker}")
+            manifest["mode"] = "list-members"
+            return manifest
 
         report_rows: list[dict] = []
 
@@ -665,6 +760,29 @@ def run_live_pull(config: SnapshotConfig, root: Path) -> dict:
                     "so this window is recent even though the member list is not."
                 ),
             }
+            if config.tick_interval_minutes:
+                # Intraday-bar mode: one file per ticker covering the window.
+                bar_dir = root / "intraday_bars"
+                bar_dir.mkdir(parents=True, exist_ok=True)
+                manifest["intraday_bar_minutes"] = config.tick_interval_minutes
+                for n, ticker in enumerate(tickers, 1):
+                    LOG.info("[%d/%d] %d-min bars for %s",
+                             n, len(tickers), config.tick_interval_minutes, ticker)
+                    try:
+                        frame = fetch_intraday_bars(
+                            session, ticker, start, end, config.tick_interval_minutes
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        LOG.warning("%s intraday bars failed: %s", ticker, exc)
+                        report_rows.append({"ticker": ticker, "kind": "intraday_bar",
+                                            "day": "", "rows": 0, "status": f"error: {exc}"})
+                        continue
+                    status = "ok" if len(frame) else "empty"
+                    if len(frame):
+                        frame.to_csv(bar_dir / f"{_safe_name(ticker)}.csv", index=False)
+                    report_rows.append({"ticker": ticker, "kind": "intraday_bar",
+                                        "day": "", "rows": len(frame), "status": status})
+
             for kind, subdir, events in (
                 ("trade", "trades", TRADE_EVENTS),
                 ("quote", "quotes", QUOTE_EVENTS),
@@ -734,6 +852,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8194, help="Bloomberg port")
     parser.add_argument("--max-members", type=int, default=None,
                         help="Cap the member list, useful for a quick trial run")
+    parser.add_argument("--tickers-file", type=Path, default=None,
+                        help="CSV with a 'bloomberg_ticker' or 'ticker' column, used "
+                             "instead of resolving point-in-time index membership")
+    parser.add_argument("--list-members", action="store_true",
+                        help="Resolve and print the universe, then stop (no data pulled)")
+    parser.add_argument("--intraday-bars", type=int, default=None, metavar="MINUTES",
+                        help="Also pull N-minute intraday bars. Use when tick data is "
+                             "not entitled: same ~140-day retention, far wider access")
     parser.add_argument("--skip-ticks", action="store_true", help="Daily history only")
     parser.add_argument("--skip-daily", action="store_true", help="Tick data only")
     parser.add_argument("--keep-tree", action="store_true",
@@ -768,6 +894,9 @@ def main(argv: list[str] | None = None) -> int:
         offline_demo=args.offline_demo,
         demo_members=args.demo_members,
         seed=args.seed,
+        tickers_file=args.tickers_file,
+        list_members_only=args.list_members,
+        tick_interval_minutes=args.intraday_bars,
     )
 
     root = config.out_dir / config.label
@@ -785,6 +914,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.verbose:
             raise
         return 1
+
+    if manifest.get("mode") == "list-members":
+        listing = config.out_dir / f"{config.label}_members.csv"
+        listing.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(root / "index_members.csv", listing)
+        shutil.rmtree(root)
+        print(f"\nMember list written to {listing}")
+        return 0
 
     manifest["generated_at"] = dt.datetime.now().isoformat(timespec="seconds")
     manifest["schema"] = {

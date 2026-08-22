@@ -245,21 +245,26 @@ def assert_no_lookahead(
     n_checks: int = 15,
     tolerance: float = 1e-8,
 ) -> None:
-    """Rebuild features on truncated history and check they do not change.
+    """Rebuild features on truncated history and check nothing depends on the future.
 
-    A feature that uses future information changes when the future is removed.
-    Recomputing at random cut points and comparing the last surviving row is a
-    direct test — far more reliable than eyeballing rolling windows for a stray
-    ``center=True`` or a full-sample ``.mean()``.
+    Two distinct failures are tested, because a leak can show up as either.
 
-    Note that features whose warm-up window is longer than the truncated
-    history simply do not appear in the rebuilt frame; those rows are skipped
-    rather than counted as passes.
+    **Value drift.** A feature that reads ahead computes a different number once
+    the future is removed. Rebuilding at random cut points and comparing the
+    overlapping rows catches a full-sample statistic or a forward shift.
+
+    **Lost availability.** A centred rolling window does *not* change the values
+    it produces — it simply cannot produce the most recent rows, because they
+    need data that has not arrived. With ``dropna=True`` those rows vanish, so a
+    value comparison alone sees nothing wrong. The check therefore also asserts
+    that truncating to bar ``t`` still yields a feature row at ``t`` whenever the
+    full build has one.
 
     Raises
     ------
     AssertionError
-        Naming each offending column and its largest relative drift.
+        Naming the offending columns, or the cut points where the latest row
+        went missing.
     """
     full = config.build(bars)
     if full.empty:
@@ -272,33 +277,56 @@ def assert_no_lookahead(
 
     rng = np.random.default_rng(0)
     candidates = np.arange(min_start, len(bars))
-    cuts = rng.choice(candidates, size=min(n_checks, len(candidates)), replace=False)
+    cuts = sorted(
+        int(c) for c in rng.choice(candidates, size=min(n_checks, len(candidates)), replace=False)
+    )
 
     offenders: dict[str, float] = {}
+    unavailable: list[pd.Timestamp] = []
     compared = 0
-    for cut in sorted(int(c) for c in cuts):
+
+    for cut in cuts:
         truncated = config.build(bars.iloc[:cut])
         if truncated.empty:
             continue
-        stamp = truncated.index[-1]
-        if stamp not in full.index:
+
+        # 1. Availability: the last truncated bar must still yield a row.
+        last_bar = bars.index[cut - 1]
+        if last_bar in full.index and last_bar not in truncated.index:
+            unavailable.append(last_bar)
             continue
-        shared = full.columns.intersection(truncated.columns)
-        if shared.empty:
+
+        # 2. Value drift across every overlapping row.
+        shared_rows = full.index.intersection(truncated.index)
+        shared_cols = full.columns.intersection(truncated.columns)
+        if len(shared_rows) == 0 or shared_cols.empty:
             continue
-        full_row = full.loc[stamp, shared].astype(float)
-        trunc_row = truncated.loc[stamp, shared].astype(float)
-        # Scale by the magnitude of the value, floored at 1, so near-zero
-        # features do not trip the check on floating-point noise.
-        scale = full_row.abs().clip(lower=1.0)
-        relative = ((full_row - trunc_row).abs() / scale).fillna(0.0)
+        # The tail is where a leak bites; comparing it all is unnecessary work.
+        tail = shared_rows[-min(len(shared_rows), 50) :]
+        full_block = full.loc[tail, shared_cols].astype(float)
+        trunc_block = truncated.loc[tail, shared_cols].astype(float)
+        # Scale by the value's own magnitude, floored at 1, so near-zero
+        # features do not trip on floating-point noise.
+        scale = full_block.abs().clip(lower=1.0)
+        relative = ((full_block - trunc_block).abs() / scale).fillna(0.0)
         compared += 1
-        for col, value in relative[relative > tolerance].items():
+        worst = relative.max()
+        for col, value in worst[worst > tolerance].items():
             offenders[col] = max(offenders.get(col, 0.0), float(value))
 
+    problems = []
     if offenders:
         detail = ", ".join(f"{c} (max rel. drift {v:.2e})" for c, v in sorted(offenders.items()))
-        raise AssertionError(f"look-ahead detected in: {detail}")
+        problems.append(f"values change when the future is removed: {detail}")
+    if unavailable:
+        problems.append(
+            f"the most recent row is unavailable at {len(unavailable)} cut point(s) "
+            f"(e.g. {unavailable[0]}) — a feature needs data that has not arrived yet, "
+            "which is what a centred rolling window does"
+        )
+    if problems:
+        raise AssertionError("look-ahead detected: " + "; ".join(problems))
+
     if compared == 0:
         logger.warning("Look-ahead check compared no rows; try more bars or fewer warm-up windows")
     else:

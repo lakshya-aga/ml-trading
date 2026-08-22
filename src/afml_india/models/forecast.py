@@ -218,7 +218,7 @@ class RecursiveLSTMForecaster:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimiser.step()
-                total += float(loss) * len(idx)
+                total += float(loss.detach()) * len(idx)
             train_loss = total / max(len(Xt), 1)
 
             if n_val:
@@ -325,6 +325,103 @@ def recursive_forecast_levels(
         fd_history.append(fd_next)
         price_history.append(price_next)
     return pd.Series(predictions, index=test.index, name="forecast")
+
+
+def walk_forward_forecast(
+    prices: pd.Series,
+    train_end: str | pd.Timestamp,
+    config: ForecastConfig | None = None,
+    transformer: FracDiffTransformer | None = None,
+    refit_every: int | None = None,
+) -> pd.Series:
+    """One-step-ahead forecasts across the test window, using realised history.
+
+    At each test step the model sees the **actual** observations up to ``t`` and
+    predicts ``t + 1``. This is the setup a strategy actually operates under —
+    yesterday's price is known before today's decision — and it is what makes the
+    output usable as a trading signal. :func:`recursive_forecast_levels` answers a
+    different and much harder question (what will the path look like from here),
+    and its errors compound.
+
+    Parameters
+    ----------
+    transformer:
+        ``None`` models price levels directly. A :class:`FracDiffTransformer`
+        models the differenced series and inverts each prediction back to a
+        price, so both arms are scored in price space.
+    refit_every:
+        Refit on all data realised so far every ``n`` steps, expanding the
+        training window. ``None`` fits once on the training window, which is
+        cheaper and avoids confounding the comparison with refit frequency.
+
+    Notes
+    -----
+    The differenced series is computed over the whole sample, which is *not*
+    leakage: fixed-width fracdiff at ``t`` reads only ``x_{t-W+1..t}``. The
+    scaler is still fit on the training window alone.
+    """
+    prices = prices.dropna().sort_index()
+    train_end = pd.Timestamp(train_end)
+    if prices.index.tz is not None and train_end.tz is None:
+        train_end = train_end.tz_localize(prices.index.tz)
+
+    test_index = prices.index[prices.index > train_end]
+    if len(test_index) == 0:
+        raise ValueError(f"no observations after train_end={train_end}")
+
+    if transformer is None:
+        modelled = prices
+    else:
+        modelled = transformer.transform(prices)
+
+    train_modelled = modelled[modelled.index <= train_end]
+    cfg = config or ForecastConfig()
+    if len(train_modelled) <= cfg.lookback + 4:
+        raise ValueError(
+            f"only {len(train_modelled)} training observations after the fracdiff "
+            f"warm-up, need more than lookback={cfg.lookback}. Loosen the fracdiff "
+            "threshold or shorten the lookback."
+        )
+
+    forecaster = RecursiveLSTMForecaster(cfg).fit(train_modelled)
+
+    values = modelled.to_numpy(dtype=float)
+    positions = {stamp: i for i, stamp in enumerate(modelled.index)}
+    predictions, kept = [], []
+
+    for step, stamp in enumerate(test_index):
+        target = positions.get(stamp)
+        if target is None or target < cfg.lookback:
+            continue  # inside the fracdiff warm-up; nothing to condition on
+
+        if refit_every and step > 0 and step % refit_every == 0:
+            forecaster = RecursiveLSTMForecaster(cfg).fit(modelled.iloc[:target])
+
+        # Everything strictly before the target: realised, never predicted.
+        window = values[target - cfg.lookback : target]
+        prediction = forecaster.predict_next(window)
+
+        if transformer is not None:
+            history = prices.loc[: modelled.index[target - 1]]
+            prediction = transformer.invert_next(history, prediction)
+        predictions.append(prediction)
+        kept.append(stamp)
+
+    if not predictions:
+        raise ValueError("no test step had enough history to forecast")
+    return pd.Series(predictions, index=pd.DatetimeIndex(kept), name="forecast")
+
+
+def expected_returns(forecast: pd.Series, prices: pd.Series) -> pd.Series:
+    """Predicted one-period return implied by a one-step-ahead price forecast.
+
+    ``r_hat_t = forecast_t / price_{t-1} - 1`` — the forecast for ``t`` against
+    the last price actually observed before it. This is the quantity a portfolio
+    layer consumes; a raw price forecast is not directly comparable across names.
+    """
+    aligned_prices = prices.reindex(prices.index.union(forecast.index)).sort_index().ffill()
+    previous = aligned_prices.shift(1).reindex(forecast.index)
+    return (forecast / previous - 1.0).rename("expected_return")
 
 
 def forecast_errors(actual: pd.Series, predicted: pd.Series) -> pd.Series:

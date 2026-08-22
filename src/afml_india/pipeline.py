@@ -51,7 +51,11 @@ class PipelineConfig:
 
     # --- stationarity ------------------------------------------------ #
     #: ``None`` selects the minimum passing order per ticker; a float pins it.
+    #: Note ``0.0`` is *not* "no differencing applied" — it is the identity
+    #: filter, which feeds the raw non-stationary log level in as a feature.
+    #: Set ``include_fracdiff=False`` to drop the block entirely.
     fracdiff_d: float | None = None
+    include_fracdiff: bool = True
     fracdiff_max_order: float = 1.0
     fracdiff_step: float = 0.1
     fracdiff_thresh: float = 1e-4
@@ -163,7 +167,10 @@ class TickerPipeline:
         diagnostics["bars"] = len(bars)
 
         # --- 2. Stationarity ------------------------------------------ #
-        if cfg.fracdiff_d is None:
+        if not cfg.include_fracdiff:
+            d = float("nan")
+            diagnostics["fracdiff"] = {"skipped": True}
+        elif cfg.fracdiff_d is None:
             selection = min_ffd_order(
                 close,
                 thresh=cfg.fracdiff_thresh,
@@ -216,7 +223,11 @@ class TickerPipeline:
 
         # --- 6. Features and sequences -------------------------------- #
         feature_config = FeatureConfig(
-            **{**cfg.features.__dict__, "d": d, "fracdiff_thresh": cfg.fracdiff_thresh}
+            **{
+                **cfg.features.__dict__,
+                "d": d if cfg.include_fracdiff else None,
+                "fracdiff_thresh": cfg.fracdiff_thresh,
+            }
         )
         features = feature_config.build(bars)
         diagnostics["features"] = features.shape[1]

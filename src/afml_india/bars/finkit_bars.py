@@ -164,6 +164,10 @@ def build_bars(
     makes every later join against the tape fail with "cannot join tz-naive with
     tz-aware", so by default the round trip is invisible.
     """
+    valid_kinds = ("tick", "volume", "dollar", "rupee")
+    if kind not in valid_kinds:
+        raise ValueError(f"unknown bar kind {kind!r}; expected one of {sorted(valid_kinds)}")
+
     tz = source_timezone(ticks, prepare_kwargs.get("time_col")) if restore_tz else None
 
     frame = prepare_tick_frame(ticks, **prepare_kwargs)

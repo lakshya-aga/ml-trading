@@ -46,10 +46,12 @@ Run in order; each builds on the last.
 | 02 | `02_event_sampling_and_fracdiff.ipynb` | CUSUM event sampling, fractional differencing, triple-barrier labels, sample weights. Ends with a leak-checked feature matrix. |
 | 03 | `03_lstm_fracdiff_comparator.ipynb` | LSTM held fixed, input representation varied (levels / returns / fracdiff). One-step-ahead forecasts, PnL, Sharpe, per-stock attribution, `baseline + selection − costs`. |
 | 04 | `04_per_ticker_framework.ipynb` | Classification with triple-barrier labels and purged walk-forward CV. LSTM against baselines, then swept across the point-in-time universe. |
+| **05** | **`05_cross_sectional_significance.ipynb`** | **The core study.** Fracdiff + LSTM on every ticker, identical configuration, out-of-sample event PnL net of Indian costs — then one number: a permutation p-value for the whole cross-section against a skill-free null. Sharpe, turnover and return metrics per ticker; robustness across cost regimes; a built-in calibration on GBM universes. |
 
-All four are committed with outputs, produced from the synthetic snapshot. **Every
-number in them is a property of a random walk** — the notebooks say so where it
-matters. Regenerate against real data before drawing any conclusion.
+All five are committed with outputs, produced from the synthetic snapshot. **Every
+number in them is a property of a toy generator** — the notebooks say so where it
+matters. Point notebook 05 at the real 140-day pull and its cells become the
+project's headline result, whichever way it lands.
 
 ---
 
@@ -210,6 +212,16 @@ sees them. `LSTMClassifier.fit` takes `sample_weight` and applies it per sample.
 roughly 138 independent observations. That number, not the row count, is what the model
 has to learn from.
 
+**The significance test is calibrated, and its first version was wrong.** The
+cross-sectional permutation test originally shuffled events independently and returned
+p = 0.001 on a random walk — overlapping events are not exchangeable, and the iid null
+understated its own variance by 2×. The investigation that found this (tape
+autocorrelation ≈ 0, plain-sklearn control, clean-GBM control) is documented in
+notebook 05, the fix is a circular-shift null that preserves both sequences' serial
+structure, and `scripts/calibrate_significance.py` re-checks calibration on skill-free
+GBM universes whenever the pipeline changes. The demo generator itself turned out to
+carry a small learnable artifact — found by the test, isolated by the calibration.
+
 ---
 
 ## Tests
@@ -220,9 +232,13 @@ pytest -m "not slow"      # skip the model fits
 ```
 
 Covers calendar arithmetic across real NSE holidays, the cost model's asymmetries,
-bar-threshold behaviour, the fin-kit adapters (including the timezone regression), and
-the look-ahead guarantee — with a negative control that plants a deliberate leak and
-requires the check to catch it.
+bar-threshold behaviour, the fin-kit adapters (including the timezone regression), the
+look-ahead guarantee, and the significance layer. The suite leans on negative
+controls: a planted centred-window leak the look-ahead check must catch, a shuffled
+label the purged CV must fail to recover, a skill-free oracle/noise pair the
+permutation test must separate, and block-correlated events on which the iid-shuffle
+null must be visibly narrower than the rotation null — the regression that motivated
+the default.
 
 ---
 

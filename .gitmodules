@@ -1,0 +1,3 @@
+[submodule "external/fin-kit"]
+	path = external/fin-kit
+	url = https://github.com/lakshya-aga/fin-kit.git

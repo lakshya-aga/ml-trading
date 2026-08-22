@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+*.parquet
+*.h5
+data/raw/
+data/interim/
+data/processed/
+artifacts/
+.DS_Store
+
+# Generated snapshots (regenerate with scripts/fetch_bloomberg_snapshot.py)
+data/snapshots/

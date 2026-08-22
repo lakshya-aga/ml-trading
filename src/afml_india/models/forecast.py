@@ -352,11 +352,14 @@ def forecast_errors(actual: pd.Series, predicted: pd.Series) -> pd.Series:
         actual_direction = np.sign(np.diff(a))
         predicted_direction = np.sign(np.diff(p))
         valid = actual_direction != 0
-        out["directional_accuracy"] = (
-            float(np.mean(actual_direction[valid] == predicted_direction[valid]))
-            if valid.any()
-            else float("nan")
-        )
+        if not valid.any() or np.all(predicted_direction == 0):
+            # A flat forecast expresses no direction at all. Scoring it as 0%
+            # correct would read as "always wrong", which is not what happened.
+            out["directional_accuracy"] = float("nan")
+        else:
+            out["directional_accuracy"] = float(
+                np.mean(actual_direction[valid] == predicted_direction[valid])
+            )
     else:
         out["directional_accuracy"] = float("nan")
     return pd.Series(out)

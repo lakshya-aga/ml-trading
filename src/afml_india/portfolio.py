@@ -132,28 +132,88 @@ def roy_ratio(forecast: pd.Series, last_price: float) -> float:
     return float((values.iloc[-1] - last_price) / spread)
 
 
+def roy_ratios(forecasts: dict[str, pd.Series], last_prices: pd.Series) -> pd.Series:
+    """Raw (unnormalised) Roy ratio per stock, for inspection before allocating."""
+    return pd.Series(
+        {sym: roy_ratio(series, float(last_prices[sym])) for sym, series in forecasts.items()}
+    )
+
+
 def roy_allocation(
     forecasts: dict[str, pd.Series],
     last_prices: pd.Series,
     long_only: bool = True,
+    max_weight: float | None = None,
 ) -> pd.Series:
     """Normalised portfolio weights from per-stock Roy ratios.
 
     ``long_only`` clips negative ratios to zero, matching the original project.
-    If every ratio is non-positive — a forecast of broad decline — the function
-    falls back to equal weight and says so, rather than returning weights that
-    do not sum to one.
+
+    ``max_weight`` caps any single position and redistributes the excess. Worth
+    setting on a small universe: the Roy ratio is a bare ratio with no
+    diversification term, so when only one forecast is positive it will happily
+    allocate the entire book to that name.
+
+    If every ratio is non-positive — a forecast of broad decline — the result
+    falls back to equal weight, and ``result.attrs['fallback']`` records it so
+    the caller can tell a real allocation from a degenerate one.
     """
-    ratios = pd.Series(
-        {sym: roy_ratio(series, float(last_prices[sym])) for sym, series in forecasts.items()}
-    )
+    ratios = roy_ratios(forecasts, last_prices)
     if long_only:
         ratios = ratios.clip(lower=0.0)
+
     total = ratios.abs().sum()
     if total <= 0:
         logger.warning("All Roy ratios are non-positive; falling back to equal weight")
-        return pd.Series(1.0 / len(ratios), index=ratios.index)
-    return ratios / total
+        weights = pd.Series(1.0 / len(ratios), index=ratios.index)
+        weights.attrs["fallback"] = True
+        weights.attrs["ratios"] = ratios
+        return weights
+
+    weights = ratios / total
+    if max_weight is not None:
+        if max_weight < 1.0 / len(weights):
+            raise ValueError(
+                f"max_weight={max_weight} is below equal weight "
+                f"({1.0 / len(weights):.4f}); no allocation can satisfy it"
+            )
+        # Iteratively cap and redistribute; converges in a few passes because
+        # each pass strictly reduces the number of names above the cap.
+        for _ in range(len(weights)):
+            over = weights > max_weight + 1e-12
+            if not over.any():
+                break
+            excess = float((weights[over] - max_weight).sum())
+            weights[over] = max_weight
+            under = ~over
+            room = weights[under].sum()
+            if room <= 0:
+                weights[under] = excess / max(under.sum(), 1)
+                break
+            weights[under] = weights[under] + excess * weights[under] / room
+
+    weights.attrs["fallback"] = False
+    weights.attrs["ratios"] = ratios
+    return weights
+
+
+def concentration(weights: pd.Series) -> pd.Series:
+    """Herfindahl index, effective number of positions, and the largest weight.
+
+    Effective N is ``1 / sum(w^2)``: a portfolio of five names with one at 100%
+    has an effective N of 1, which is the number worth looking at rather than
+    the nominal count.
+    """
+    w = pd.Series(weights).fillna(0.0)
+    hhi = float((w**2).sum())
+    return pd.Series(
+        {
+            "herfindahl": hhi,
+            "effective_n": float(1.0 / hhi) if hhi > 0 else float("nan"),
+            "max_weight": float(w.max()),
+            "n_nonzero": float((w > 1e-12).sum()),
+        }
+    )
 
 
 def equal_weights(symbols) -> pd.Series:

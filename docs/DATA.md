@@ -247,6 +247,24 @@ Tick timestamps are converted from Bloomberg's UTC to **IST**, so they line up w
 
 ---
 
+## Losing terminal access? Archive the long-history data first
+
+Intraday is capped at ~140 days and perishes a day at a time; everything else
+reaches back decades and disappears with your login. `scripts/fetch_bloomberg_archive.py`
+grabs it in one run, ordered by irreplaceability: monthly point-in-time index
+membership for N years (the survivorship-free universe — effectively unobtainable
+free later), daily OHLCV for **every name ever in the index** (adjusted *and* raw),
+dividend/split history, index & macro series, and an ISIN/sector reference snapshot
+for mapping to other vendors.
+
+```bash
+python scripts/fetch_bloomberg_archive.py --check      # verify macro tickers resolve
+python scripts/fetch_bloomberg_archive.py --years 20   # the archive (well under an hour)
+```
+
+One zip comes out; it belongs on Drive next to the tick snapshot — and, like the
+tick data, it is licensed Bloomberg content: keep it private, never in a public repo.
+
 ## Storing it on Drive and using it later
 
 The zip is self-describing — nothing outside it is needed to read it.

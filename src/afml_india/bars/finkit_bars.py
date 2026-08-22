@@ -131,6 +131,19 @@ def _bar_builder(kind: str):
     return builders[kind]
 
 
+def source_timezone(ticks: pd.DataFrame, time_col: str | None = None) -> str | None:
+    """Timezone of a tick tape's timestamps, or ``None`` when naive."""
+    if time_col is not None:
+        stamps = pd.DatetimeIndex(pd.to_datetime(ticks[time_col]))
+    elif isinstance(ticks.index, pd.DatetimeIndex):
+        stamps = ticks.index
+    elif "date_time" in ticks.columns:
+        stamps = pd.DatetimeIndex(pd.to_datetime(ticks["date_time"]))
+    else:
+        return None
+    return str(stamps.tz) if stamps.tz is not None else None
+
+
 def build_bars(
     ticks: pd.DataFrame,
     kind: str = "dollar",
@@ -138,13 +151,21 @@ def build_bars(
     bars_per_day: int = DEFAULT_BARS_PER_DAY,
     verbose: bool = False,
     set_index: bool = True,
+    restore_tz: bool = True,
     **prepare_kwargs,
 ) -> pd.DataFrame:
     """Build AFML bars of ``kind`` from a tick tape.
 
     ``threshold`` defaults to the value :func:`suggest_thresholds` derives for
     this specific tape, which is almost always what you want for a first pass.
+
+    ``restore_tz`` puts the source timezone back on the bar index. fin-kit needs
+    naive timestamps internally, but returning naive bars from IST-aware ticks
+    makes every later join against the tape fail with "cannot join tz-naive with
+    tz-aware", so by default the round trip is invisible.
     """
+    tz = source_timezone(ticks, prepare_kwargs.get("time_col")) if restore_tz else None
+
     frame = prepare_tick_frame(ticks, **prepare_kwargs)
     if frame.empty:
         raise ValueError("no usable ticks after cleaning")
@@ -166,6 +187,8 @@ def build_bars(
         bars["date_time"] = pd.to_datetime(bars["date_time"])
         bars = bars.set_index("date_time").sort_index()
         bars.index.name = "timestamp"
+        if tz is not None:
+            bars.index = bars.index.tz_localize(tz)
     return bars
 
 
@@ -180,11 +203,20 @@ def build_all_bars(
     difference in the return distribution is then attributable to the sampling
     clock rather than to sample size.
     """
+    tz = source_timezone(ticks)
     frame = prepare_tick_frame(ticks)
     thresholds = suggest_thresholds(frame, bars_per_day)
-    return {
-        kind: build_bars(
-            frame, kind=kind, threshold=thresholds[kind], verbose=verbose, trades_only=False
+    out = {}
+    for kind in ("tick", "volume", "dollar"):
+        bars = build_bars(
+            frame,
+            kind=kind,
+            threshold=thresholds[kind],
+            verbose=verbose,
+            trades_only=False,
+            restore_tz=False,
         )
-        for kind in ("tick", "volume", "dollar")
-    }
+        if tz is not None:
+            bars.index = bars.index.tz_localize(tz)
+        out[kind] = bars
+    return out

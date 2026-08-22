@@ -23,7 +23,8 @@ __all__ = [
 
 def __getattr__(name: str):
     """Expose the fin-kit adapters lazily so importing this package never needs mlfinlab."""
-    if name in ("build_bars", "build_all_bars", "prepare_tick_frame", "suggest_thresholds"):
+    if name in ("build_bars", "build_all_bars", "prepare_tick_frame",
+                "suggest_thresholds", "source_timezone"):
         from afml_india.bars import finkit_bars  # noqa: PLC0415
 
         return getattr(finkit_bars, name)
